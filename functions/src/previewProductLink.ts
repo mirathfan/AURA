@@ -87,8 +87,7 @@ function candidateHasUsableProductEvidence(candidate: AuraCandidateItem, metadat
   const image =
     cleanText(candidate.primaryImageUrl) ||
     cleanText(candidate.imageUrls?.[0]) ||
-    cleanText(candidate.secondaryImageUrls?.[0]) ||
-    cleanText("imageUrl" in metadata ? metadata.imageUrl : null);
+    cleanText(candidate.secondaryImageUrls?.[0]);
   return { hasTitle: !!title, hasImage: !!image };
 }
 

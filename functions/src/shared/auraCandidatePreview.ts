@@ -5,12 +5,116 @@ import {
   isNikeProductUrlForImageRanking,
   NIKE_FOOTWEAR_LEFT_PROFILE_REASON,
 } from "./nikeFootwearImageRanking";
-import { redactUrlForLogs } from "./safeFetch";
+import {
+  SafeFetchError,
+  redactUrlForLogs,
+  safeFetch,
+} from "./safeFetch";
+import { logger } from "./logger";
 
 const DEBUG_AURA_CANDIDATE_LOGS =
   process.env.DEBUG_AURA_CANDIDATE_LOGS === "1" ||
   process.env.DEBUG_AURA_CANDIDATE_LOGS === "true";
 const PRODUCT_IMAGE_VISION_RANK_LIMIT = 8;
+const PRODUCT_IMAGE_REACHABILITY_LIMIT = 6;
+const PRODUCT_IMAGE_PROBE_TIMEOUT_MS = 3_500;
+const PRODUCT_IMAGE_PROBE_USER_AGENT =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) " +
+  "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+
+export type ProductImageReachabilitySummary = {
+  candidateCount: number;
+  attemptedCount: number;
+  reachableCount: number;
+  validationRejectedCount: number;
+  fetchFailedCount: number;
+  failureReasons: string[];
+};
+
+type ProductImageProbe = (url: string) => Promise<{
+  reachable: boolean;
+  failureReason?: string | null;
+  validationRejected?: boolean;
+}>;
+
+async function probeProductImageUrl(url: string): ReturnType<ProductImageProbe> {
+  try {
+    const head = await safeFetch(url, {
+      expectedKind: "image",
+      method: "HEAD",
+      timeoutMs: PRODUCT_IMAGE_PROBE_TIMEOUT_MS,
+      maxRedirects: 3,
+      headers: {
+        accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "user-agent": PRODUCT_IMAGE_PROBE_USER_AGENT,
+      },
+    });
+    if (head.ok) return { reachable: true };
+    if (head.status !== 405 && head.status !== 501) {
+      return { reachable: false, failureReason: `http_${head.status}` };
+    }
+  } catch (error) {
+    if (!(error instanceof SafeFetchError) || !["unsupported_format", "fetch_failed"].includes(error.code)) {
+      return {
+        reachable: false,
+        failureReason: error instanceof SafeFetchError ? error.code : "unexpected_probe_error",
+        validationRejected: error instanceof SafeFetchError && ["invalid_url", "unsafe_url"].includes(error.code),
+      };
+    }
+  }
+
+  try {
+    const partial = await safeFetch(url, {
+      expectedKind: "image",
+      timeoutMs: PRODUCT_IMAGE_PROBE_TIMEOUT_MS,
+      maxBytes: 1,
+      maxRedirects: 3,
+      headers: {
+        accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        range: "bytes=0-0",
+        "user-agent": PRODUCT_IMAGE_PROBE_USER_AGENT,
+      },
+    });
+    return partial.ok
+      ? { reachable: true }
+      : { reachable: false, failureReason: `http_${partial.status}` };
+  } catch (error) {
+    if (error instanceof SafeFetchError && error.code === "too_large") {
+      return { reachable: true };
+    }
+    return {
+      reachable: false,
+      failureReason: error instanceof SafeFetchError ? error.code : "unexpected_probe_error",
+      validationRejected: error instanceof SafeFetchError && ["invalid_url", "unsafe_url"].includes(error.code),
+    };
+  }
+}
+
+export async function filterReachableProductImageUrls(
+  imageUrls: string[],
+  options: { probe?: ProductImageProbe; maxAttempts?: number } = {},
+) {
+  const deduped = stableUniqueUrls(imageUrls);
+  const attempted = deduped.slice(0, options.maxAttempts ?? PRODUCT_IMAGE_REACHABILITY_LIMIT);
+  const probe = options.probe ?? probeProductImageUrl;
+  const outcomes = await Promise.all(attempted.map(async (url) => ({
+    url,
+    ...(await probe(url)),
+  })));
+  const urls = outcomes.filter((outcome) => outcome.reachable).map((outcome) => outcome.url);
+  const failureReasons = Array.from(new Set(outcomes
+    .map((outcome) => outcome.failureReason)
+    .filter((reason): reason is string => !!reason)));
+  const summary: ProductImageReachabilitySummary = {
+    candidateCount: deduped.length,
+    attemptedCount: attempted.length,
+    reachableCount: urls.length,
+    validationRejectedCount: outcomes.filter((outcome) => outcome.validationRejected).length,
+    fetchFailedCount: outcomes.filter((outcome) => !outcome.reachable && !outcome.validationRejected).length,
+    failureReasons,
+  };
+  return { urls, summary };
+}
 
 function debugAuraCandidateInfo(...args: Parameters<typeof console.info>) {
   if (DEBUG_AURA_CANDIDATE_LOGS) {
@@ -702,7 +806,19 @@ export async function rankProductLinkImages(params: {
   preferNikeFootwearLeftProfile?: boolean;
 }): Promise<RankedProductImage[]> {
   const extractedImageCount = params.imageUrls.length;
-  const imageUrls = stableUniqueUrls(params.imageUrls).slice(0, 24);
+  const reachability = await filterReachableProductImageUrls(params.imageUrls);
+  const imageUrls = reachability.urls;
+  logger.info("product_link_image_validation_completed", {
+    sourceDomain: safeHost(params.sourceUrl ?? ""),
+    candidateCount: reachability.summary.candidateCount,
+    attemptedCount: reachability.summary.attemptedCount,
+    validationRejectedCount: reachability.summary.validationRejectedCount,
+    fetchFailedCount: reachability.summary.fetchFailedCount,
+    reachableCount: reachability.summary.reachableCount,
+    failureReasons: reachability.summary.failureReasons,
+    finalCandidateHost: safeHost(imageUrls[0] ?? ""),
+    finalCandidateType: imageUrls[0] ? urlImageSignals(imageUrls[0]).reasons[0] ?? "url_ranked" : null,
+  });
   const shouldConsiderNikeFootwearPreference =
     !!params.preferNikeFootwearLeftProfile && isNikeProductUrlForImageRanking(params.sourceUrl);
   const isFootwearProduct = isFootwearProductText(
@@ -1159,11 +1275,11 @@ export async function rankProductExtractionImages(params: {
       ...params.extraction.metadata,
       selectedImageReason,
     },
-    imageUrls: imageUrls.length ? imageUrls : params.extraction.imageUrls,
+    imageUrls,
     partialData: params.extraction.partialData
       ? {
           ...params.extraction.partialData,
-          imageUrls: imageUrls.length ? imageUrls : params.extraction.partialData.imageUrls,
+          imageUrls,
         }
       : params.extraction.partialData,
   };

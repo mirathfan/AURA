@@ -34,6 +34,9 @@ export type ProductExtractionDiagnostics = {
   categoryConfidence: ProductFieldConfidence;
   extractionWarnings: string[];
   warningCodes: ProductLinkWarningCode[];
+  titleSource?: string | null;
+  priceSource?: string | null;
+  currencySource?: string | null;
 };
 
 export type ProductExtractionResult = {
@@ -72,6 +75,9 @@ export type ProductExtractionResult = {
   priceUnavailable?: boolean;
   marketPriceUnavailable?: boolean;
   collection?: string | null;
+  titleSource?: string | null;
+  priceSource?: string | null;
+  currencySource?: string | null;
   breadcrumbs?: string[];
   debug?: {
     sources: string[];
@@ -461,32 +467,44 @@ function offerFromProduct(product: JsonObject | null): JsonObject | null {
   return offers[0] ?? asObject(product?.offers);
 }
 
-function aggregateOfferFromProduct(product: JsonObject | null): JsonObject | null {
-  const offer = offerFromProduct(product);
-  if (!offer) return null;
-  return jsonTypeIncludes(offer["@type"], "AggregateOffer") ? offer : null;
-}
-
 function priceFromOffer(product: JsonObject | null) {
-  const aggregate = aggregateOfferFromProduct(product);
-  const offer = offerFromProduct(product);
-  const priceValue =
-    aggregate?.lowPrice ??
-    offer?.price ??
-    offer?.priceSpecification ??
-    product?.price;
-  const priceSpec = asObject(priceValue);
-  const amount = parseAmount(priceSpec?.price ?? priceValue);
-  const currency =
-    cleanText(aggregate?.priceCurrency ?? offer?.priceCurrency ?? priceSpec?.priceCurrency ?? product?.priceCurrency, 12) ??
-    currencyFromText(priceValue);
+  const offers = asArray(product?.offers)
+    .map((entry) => asObject(entry))
+    .filter((entry): entry is JsonObject => !!entry);
+  const candidates = (offers.length ? offers : [product ?? {}]).map((offer, index) => {
+    const aggregate = jsonTypeIncludes(offer["@type"], "AggregateOffer") ? offer : null;
+    const priceValue = aggregate?.lowPrice ?? offer.price ?? offer.priceSpecification ?? product?.price;
+    const priceSpec = asObject(priceValue);
+    const amount = parseAmount(priceSpec?.price ?? priceValue);
+    const currency =
+      cleanText(aggregate?.priceCurrency ?? offer.priceCurrency ?? priceSpec?.priceCurrency ?? product?.priceCurrency, 12) ??
+      currencyFromText(priceValue);
+    const availability = cleanText(offer.availability ?? aggregate?.availability, 120);
+    let score = amount == null ? -100 : 0;
+    if (offer.price != null || priceSpec?.price != null) score += 25;
+    if (currency) score += 15;
+    if (/instock|limitedavailability/i.test(availability ?? "")) score += 12;
+    if (/outofstock|soldout|discontinued/i.test(availability ?? "")) score -= 20;
+    if (aggregate) score -= 3;
+    return {
+      amount,
+      currency,
+      display: priceDisplay(amount, currency, priceValue),
+      availability,
+      lowPrice: parseAmount(aggregate?.lowPrice),
+      highPrice: parseAmount(aggregate?.highPrice),
+      score,
+      index,
+    };
+  });
+  const selected = candidates.sort((a, b) => b.score - a.score || a.index - b.index)[0];
   return {
-    amount,
-    currency,
-    display: priceDisplay(amount, currency, priceValue),
-    availability: cleanText(offer?.availability ?? aggregate?.availability, 120),
-    lowPrice: parseAmount(aggregate?.lowPrice),
-    highPrice: parseAmount(aggregate?.highPrice),
+    amount: selected?.amount ?? null,
+    currency: selected?.currency ?? null,
+    display: selected?.display ?? null,
+    availability: selected?.availability ?? null,
+    lowPrice: selected?.lowPrice ?? null,
+    highPrice: selected?.highPrice ?? null,
   };
 }
 
@@ -514,6 +532,7 @@ function resultFromProductNode(product: JsonObject, pageUrl: URL, nodes: JsonObj
   );
   return {
     title: cleanText(valueByKeys(product, ["name", "headline", "title"]), 220),
+    titleSource: "json_ld_product_name",
     brand: brandFromNode(product),
     category: cleanText(product.category ?? breadcrumbs[breadcrumbs.length - 2] ?? breadcrumbs[breadcrumbs.length - 1], 120),
     subcategory: cleanText(breadcrumbs[breadcrumbs.length - 1], 120),
@@ -524,6 +543,8 @@ function resultFromProductNode(product: JsonObject, pageUrl: URL, nodes: JsonObj
     price: price.display,
     priceAmount: price.amount,
     currency: price.currency,
+    priceSource: price.amount != null ? "json_ld_offer" : null,
+    currencySource: price.currency ? "json_ld_offer" : null,
     availability: price.availability,
     images,
     primaryImage: images[0]?.url ?? null,
@@ -588,6 +609,19 @@ function titleTag(html: string) {
   return value ? cleanText(decodeHtmlEntities(value), 220) : null;
 }
 
+function canonicalProductUrl(pageUrl: URL, value: unknown) {
+  const normalized = normalizeImageUrl(pageUrl, value);
+  if (!normalized) return pageUrl.toString();
+  try {
+    const candidate = new URL(normalized);
+    const pageLooksLikeProduct = /\/(?:products?|p|dp|shop\/product)\//i.test(pageUrl.pathname);
+    if (pageLooksLikeProduct && candidate.pathname === "/") return pageUrl.toString();
+    return candidate.toString();
+  } catch {
+    return pageUrl.toString();
+  }
+}
+
 export function extractOpenGraph(html: string, pageUrl: string | URL): ProductExtractionResult {
   const url = new URL(pageUrl.toString());
   const image = metaContent(html, "og:image") ?? metaContent(html, "og:image:secure_url") ?? metaContent(html, "twitter:image") ?? metaContent(html, "twitter:image:src");
@@ -596,14 +630,20 @@ export function extractOpenGraph(html: string, pageUrl: string | URL): ProductEx
   const currency =
     cleanText(metaContent(html, "product:price:currency") ?? metaContent(html, "og:price:currency"), 12) ??
     currencyFromText(metaContent(html, "product:price:amount"), metaContent(html, "og:price:amount"));
-  const canonical = normalizeImageUrl(url, metaContent(html, "og:url")) ?? url.toString();
+  const canonical = canonicalProductUrl(url, metaContent(html, "og:url"));
+  const ogTitle = metaContent(html, "og:title");
+  const twitterTitle = metaContent(html, "twitter:title");
+  const pageTitle = titleTag(html);
   return {
-    title: metaContent(html, "og:title") ?? metaContent(html, "twitter:title") ?? titleTag(html),
+    title: ogTitle ?? twitterTitle ?? pageTitle,
+    titleSource: ogTitle ? "open_graph_title" : twitterTitle ? "twitter_title" : pageTitle ? "page_title" : null,
     description: metaContent(html, "og:description") ?? metaContent(html, "twitter:description") ?? metaContent(html, "description"),
     brand: metaContent(html, "product:brand") ?? metaContent(html, "brand"),
     price: priceDisplay(amount, currency, metaContent(html, "product:price:amount") ?? metaContent(html, "og:price:amount")),
     priceAmount: amount,
     currency,
+    priceSource: amount != null ? "open_graph_price" : null,
+    currencySource: currency ? "open_graph_price" : null,
     availability: metaContent(html, "product:availability") ?? metaContent(html, "og:availability"),
     color: metaContent(html, "product:color") ?? metaContent(html, "color"),
     images,
@@ -762,6 +802,7 @@ function resultFromProductObject(object: JsonObject, pageUrl: URL, source: strin
   const images = extractObjectImages(object, pageUrl, source);
   return {
     title: cleanText(valueByKeys(object, ["name", "title", "productName", "fullTitle"]), 220),
+    titleSource: "embedded_product_title",
     brand: cleanText(valueByKeys(object, ["brand", "brandName", "vendor", "designerName"]) ?? brandFromNode(object), 120),
     color: cleanText(valueByKeys(object, ["color", "colour", "colorName", "selectedColor", "colorway"]), 120),
     description: cleanText(valueByKeys(object, ["description", "shortDescription", "longDescription"]), 900),
@@ -775,6 +816,8 @@ function resultFromProductObject(object: JsonObject, pageUrl: URL, source: strin
     salePrice,
     originalPrice,
     currency,
+    priceSource: amount != null ? "embedded_product_price" : null,
+    currencySource: currency ? "embedded_product_price" : null,
     availability: cleanText(valueByKeys(object, ["availability", "stockStatus", "inventoryStatus"]), 120),
     sizes: extractSizes(object),
     images,
@@ -847,6 +890,129 @@ function hasExtractionEvidence(result: Partial<ProductExtractionResult>) {
   ].some(isMeaningful);
 }
 
+const PRODUCT_TITLE_NOUN_RE = /\b(?:shirt|t-?shirt|tee|polo|hoodie|sweatshirt|sweater|jumper|cardigan|jacket|bomber|coat|blazer|trench|vest|tank|blouse|top|jeans|trousers|pants|shorts|skirt|dress|jumpsuit|romper|shoe|sneaker|trainer|boot|loafer|sandal|heel|bag|tote|backpack|wallet|belt|hat|cap|beanie|scarf|sunglasses|watch)\b/i;
+const PRODUCT_SIZE_TOKEN_RE = /^(?:xxs|xs|s|m|l|xl|xxl|2xl|3xl|\d{1,2}(?:\.5)?|one\s+size)$/i;
+const PRODUCT_COLOR_WORD_RE = /^(?:black|white|grey|gray|blue|navy|green|red|pink|purple|brown|tan|beige|cream|ivory|yellow|orange|silver|gold|olive|khaki|charcoal|natural|heather|marl|agave|ecru|stone)$/i;
+
+export function looksLikeProductVariantTitle(value?: string | null) {
+  const title = cleanText(value, 220);
+  if (!title) return true;
+  if (PRODUCT_TITLE_NOUN_RE.test(title)) return false;
+  const words = title.split(/[\s/|_-]+/).filter(Boolean);
+  if (!words.length) return true;
+  if (words.every((word) => PRODUCT_SIZE_TOKEN_RE.test(word))) return true;
+  if (PRODUCT_SIZE_TOKEN_RE.test(words[words.length - 1] ?? "")) return true;
+  if (words.length <= 5 && words.every((word) => PRODUCT_COLOR_WORD_RE.test(word))) return true;
+  return false;
+}
+
+function looksLikeSkuTitle(value?: string | null) {
+  const title = cleanText(value, 220);
+  if (!title) return true;
+  if (/^[A-Z0-9]+(?:[-_/][A-Z0-9]+){1,4}$/i.test(title) && /\d/.test(title)) return true;
+  return /^\d{5,}$/.test(title);
+}
+
+export function selectBestProductTitle(candidates: Array<{
+  title?: string | null;
+  source?: string | null;
+  confidence?: ProductFieldConfidence;
+}>) {
+  const sourceWeight = (source?: string | null) => {
+    const value = String(source ?? "").toLowerCase();
+    if (value.includes("adapter")) return 110;
+    if (value.includes("json_ld") || value.includes("structured")) return 100;
+    if (value.includes("embedded") || value.includes("shopify")) return 95;
+    if (value.includes("open_graph")) return 75;
+    if (value.includes("twitter")) return 70;
+    if (value.includes("page_title")) return 65;
+    return 55;
+  };
+  const confidenceWeight: Record<ProductFieldConfidence, number> = {
+    high: 15,
+    medium: 8,
+    low: 2,
+    missing: -20,
+  };
+  const ranked = candidates
+    .map((candidate, index) => {
+      const title = cleanText(candidate.title, 220);
+      if (!title) return null;
+      let score = sourceWeight(candidate.source) + confidenceWeight[candidate.confidence ?? "low"];
+      if (PRODUCT_TITLE_NOUN_RE.test(title)) score += 35;
+      if (looksLikeProductVariantTitle(title)) score -= 95;
+      if (looksLikeSkuTitle(title)) score -= 140;
+      if (title.split(/\s+/).length >= 2) score += 5;
+      return { title, source: candidate.source ?? null, confidence: candidate.confidence ?? "low", score, index };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => !!entry)
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  return ranked[0] ?? { title: null, source: null, confidence: "missing" as ProductFieldConfidence, score: -1, index: -1 };
+}
+
+export function selectBestProductPrice(candidates: Array<{
+  amount?: number | null;
+  salePrice?: number | null;
+  originalPrice?: number | null;
+  currency?: string | null;
+  source?: string | null;
+  title?: string | null;
+  availability?: string | null;
+}>, preferredCurrency?: string | null) {
+  const sourceWeight = (source?: string | null) => {
+    const value = String(source ?? "").toLowerCase();
+    if (value.includes("json_ld") || value.includes("structured")) return 100;
+    if (value.includes("embedded") || value.includes("shopify")) return 90;
+    if (value.includes("open_graph") || value.includes("meta")) return 70;
+    if (value.includes("visible")) return 35;
+    return 50;
+  };
+  const normalizedPreferredCurrency = cleanText(preferredCurrency, 12)?.toUpperCase() ?? null;
+  const ranked = candidates
+    .map((candidate, index) => {
+      const baseAmount = typeof candidate.amount === "number" && Number.isFinite(candidate.amount) && candidate.amount > 0
+        ? candidate.amount
+        : null;
+      const salePrice = typeof candidate.salePrice === "number" && candidate.salePrice > 0
+        ? candidate.salePrice
+        : null;
+      const originalPrice = typeof candidate.originalPrice === "number" && candidate.originalPrice > 0
+        ? candidate.originalPrice
+        : null;
+      const amount = salePrice ?? baseAmount;
+      if (amount == null) return null;
+      const currency = cleanText(candidate.currency, 12)?.toUpperCase() ?? null;
+      let score = sourceWeight(candidate.source);
+      if (currency) score += 12;
+      if (normalizedPreferredCurrency && currency === normalizedPreferredCurrency) score += 24;
+      if (normalizedPreferredCurrency && currency && currency !== normalizedPreferredCurrency) score -= 24;
+      if (/instock|limitedavailability/i.test(candidate.availability ?? "")) score += 8;
+      if (/outofstock|soldout|discontinued/i.test(candidate.availability ?? "")) score -= 15;
+      if (looksLikeProductVariantTitle(candidate.title)) score -= 55;
+      if (salePrice != null && originalPrice != null && salePrice < originalPrice) score += 10;
+      return {
+        amount,
+        salePrice: salePrice != null && originalPrice != null && salePrice < originalPrice ? salePrice : null,
+        originalPrice: originalPrice != null && originalPrice > amount ? originalPrice : null,
+        currency,
+        source: candidate.source ?? null,
+        score,
+        index,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => !!entry)
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  return ranked[0] ?? {
+    amount: null,
+    salePrice: null,
+    originalPrice: null,
+    currency: null,
+    source: null,
+    score: -1,
+    index: -1,
+  };
+}
+
 function mergeScalar<T extends keyof ProductExtractionResult>(
   target: ProductExtractionResult,
   source: ProductExtractionResult,
@@ -870,7 +1036,7 @@ function mergeScalar<T extends keyof ProductExtractionResult>(
 export function mergeExtractionResults(
   results: Array<Partial<ProductExtractionResult> | null | undefined>,
   pageUrl: string | URL,
-  options: { defaultSource?: string } = {},
+  options: { defaultSource?: string; preferredCurrency?: string | null } = {},
 ): ProductExtractionResult {
   const url = new URL(pageUrl.toString());
   const merged: ProductExtractionResult = {
@@ -929,6 +1095,35 @@ export function mergeExtractionResults(
     );
     merged.sizes = Array.from(new Set([...(merged.sizes ?? []), ...(partial.sizes ?? [])])).slice(0, 32);
     merged.breadcrumbs = Array.from(new Set([...(merged.breadcrumbs ?? []), ...(partial.breadcrumbs ?? [])])).slice(0, 12);
+  }
+  const evidence = results.filter((result): result is ProductExtractionResult => !!result);
+  const selectedTitle = selectBestProductTitle(evidence.map((result) => ({
+    title: result.title,
+    source: result.titleSource ?? result.extractionSource ?? result.adapterName,
+    confidence: result.titleConfidence,
+  })));
+  if (selectedTitle.title) {
+    merged.title = selectedTitle.title;
+    merged.titleSource = selectedTitle.source;
+    merged.titleConfidence = selectedTitle.confidence;
+  }
+  const selectedPrice = selectBestProductPrice(evidence.map((result) => ({
+    amount: result.priceAmount,
+    salePrice: result.salePrice,
+    originalPrice: result.originalPrice,
+    currency: result.currency,
+    source: result.priceSource ?? result.extractionSource,
+    title: result.title,
+    availability: result.availability,
+  })), options.preferredCurrency);
+  if (selectedPrice.amount != null) {
+    merged.priceAmount = selectedPrice.amount;
+    merged.salePrice = selectedPrice.salePrice;
+    merged.originalPrice = selectedPrice.originalPrice;
+    merged.currency = selectedPrice.currency;
+    merged.price = priceDisplay(selectedPrice.amount, selectedPrice.currency);
+    merged.priceSource = selectedPrice.source;
+    merged.currencySource = selectedPrice.currency ? selectedPrice.source : null;
   }
   merged.images = rankGenericProductImages(merged, url);
   merged.primaryImage = merged.images[0]?.url ?? merged.primaryImage ?? null;
@@ -1089,6 +1284,9 @@ export function buildProductExtractionDiagnostics(
     imageConfidence: result.imageConfidence ?? confidenceFor(result.primaryImage ?? result.images, "low"),
     categoryConfidence: result.categoryConfidence ?? confidenceFor(result.category ?? result.subcategory, "low"),
     extractionWarnings: Array.from(new Set(warnings)),
+    titleSource: result.titleSource ?? null,
+    priceSource: result.priceSource ?? null,
+    currencySource: result.currencySource ?? null,
   };
   return {
     ...diagnostics,
@@ -1111,6 +1309,13 @@ function cleanupTitle(value?: string | null, retailer?: string | null) {
 }
 
 function firstFromSources(ctx: ProductExtractionContext, key: keyof ProductExtractionResult) {
+  if (key === "title") {
+    return selectBestProductTitle([
+      { title: ctx.structured.title, source: ctx.structured.titleSource ?? "structured_data", confidence: ctx.structured.titleConfidence },
+      { title: ctx.embedded.title, source: ctx.embedded.titleSource ?? "embedded_app_state", confidence: ctx.embedded.titleConfidence },
+      { title: ctx.openGraph.title, source: ctx.openGraph.titleSource ?? "open_graph", confidence: ctx.openGraph.titleConfidence },
+    ]).title;
+  }
   return ctx.structured[key] ?? ctx.embedded[key] ?? ctx.openGraph[key] ?? null;
 }
 
@@ -1132,6 +1337,7 @@ function adapterResult(ctx: ProductExtractionContext, id: string, fields: Partia
     ...fields,
     adapterName: id,
     extractionSource: "retailer_adapter",
+    titleSource: fields.title ? `adapter:${id}` : null,
     confidence: fields.confidence ?? 0.9,
     titleConfidence: fields.titleConfidence ?? confidenceFor(fields.title, sourceConfidence),
     brandConfidence: fields.brandConfidence ?? confidenceFor(fields.brand, sourceConfidence),
@@ -1330,6 +1536,31 @@ function finalizeGenericProductResult(
   };
 }
 
+function storefrontCurrencyFromHtml(html: string) {
+  const explicit = cleanText(
+    metaContent(html, "product:price:currency") ??
+    metaContent(html, "og:price:currency"),
+    12,
+  )?.toUpperCase();
+  if (explicit && /^[A-Z]{3}$/.test(explicit)) return explicit;
+  const locale = cleanText(metaContent(html, "og:locale"), 20)?.replace("-", "_").toUpperCase();
+  const country = locale?.split("_")[1] ?? null;
+  const currencies: Record<string, string> = {
+    US: "USD",
+    GB: "GBP",
+    CA: "CAD",
+    AU: "AUD",
+    NZ: "NZD",
+    JP: "JPY",
+    IN: "INR",
+  };
+  if (country && currencies[country]) return currencies[country];
+  if (country && ["AT", "BE", "DE", "ES", "FI", "FR", "IE", "IT", "NL", "PT"].includes(country)) {
+    return "EUR";
+  }
+  return null;
+}
+
 export function extractGenericProductDataSync(rawUrl: string | URL, html: string): ProductExtractionResult {
   const normalized = normalizeProductUrl(rawUrl);
   const structured = extractStructuredData(html, normalized.url);
@@ -1346,7 +1577,9 @@ export function extractGenericProductDataSync(rawUrl: string | URL, html: string
   const adapter = retailerAdapters.find((entry) => entry.canHandle(normalized.url));
   const adapterExtracted = adapter ? adapter.extract(ctx) : null;
   const adapterPartial = isPromiseLike(adapterExtracted) ? null : adapterExtracted;
-  const merged = mergeExtractionResults([adapterPartial, structured, embedded, openGraph], normalized.url);
+  const merged = mergeExtractionResults([adapterPartial, structured, embedded, openGraph], normalized.url, {
+    preferredCurrency: storefrontCurrencyFromHtml(html),
+  });
   return finalizeGenericProductResult(merged, normalized, html);
 }
 
@@ -1365,6 +1598,8 @@ export async function extractGenericProductData(rawUrl: string | URL, html: stri
   };
   const adapter = retailerAdapters.find((entry) => entry.canHandle(normalized.url));
   const adapterPartial = adapter ? await adapter.extract(ctx) : null;
-  const merged = mergeExtractionResults([adapterPartial, structured, embedded, openGraph], normalized.url);
+  const merged = mergeExtractionResults([adapterPartial, structured, embedded, openGraph], normalized.url, {
+    preferredCurrency: storefrontCurrencyFromHtml(html),
+  });
   return finalizeGenericProductResult(merged, normalized, html);
 }

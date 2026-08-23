@@ -50,6 +50,9 @@ type DiagnosticLike = {
   extractionWarnings?: unknown;
   warningCodes?: unknown;
   primaryImageHost?: string | null;
+  titleSource?: string | null;
+  priceSource?: string | null;
+  currencySource?: string | null;
 };
 
 type MetadataLike = {
@@ -72,6 +75,9 @@ type MetadataLike = {
   priceUnavailable?: boolean | null;
   marketPriceUnavailable?: boolean | null;
   extractionDiagnostics?: DiagnosticLike | null;
+  titleSource?: string | null;
+  priceSource?: string | null;
+  currencySource?: string | null;
 };
 
 type ErrorLike = {
@@ -105,6 +111,9 @@ export type ProductLinkLogMetadata = {
   fallbackPath?: string | null;
   httpStatus?: number | null;
   primaryImageHost?: string | null;
+  titleSource?: string | null;
+  priceSource?: string | null;
+  currencySource?: string | null;
 };
 
 export function isProductLinkExtractionV2Enabled(env = process.env): boolean {
@@ -372,6 +381,9 @@ export function buildProductLinkLogMetadata(params: {
     primaryImageHost:
       diagnostics?.primaryImageHost ??
       hostFromUrl(params.primaryImageUrl ?? params.metadata?.imageUrl ?? params.metadata?.primaryImage ?? null),
+    titleSource: diagnostics?.titleSource ?? params.metadata?.titleSource ?? null,
+    priceSource: diagnostics?.priceSource ?? params.metadata?.priceSource ?? null,
+    currencySource: diagnostics?.currencySource ?? params.metadata?.currencySource ?? null,
   };
 }
 

@@ -31,6 +31,7 @@ export type SafeFetchResult = {
 type SafeFetchOptions = {
   expectedKind: SafeFetchExpectedKind;
   headers?: HeadersInit;
+  method?: "GET" | "HEAD";
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
@@ -181,6 +182,7 @@ export async function safeFetch(rawUrl: string | URL, options: SafeFetchOptions)
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(currentUrl.toString(), {
+        method: options.method ?? "GET",
         headers: options.headers,
         redirect: "manual",
         signal: controller.signal,
@@ -203,7 +205,9 @@ export async function safeFetch(rawUrl: string | URL, options: SafeFetchOptions)
         throw new SafeFetchError("URL returned an unsupported content type.", "unsupported_format");
       }
 
-      const bytes = await readResponseBytes(response, maxBytes);
+      const bytes = options.method === "HEAD"
+        ? Buffer.alloc(0)
+        : await readResponseBytes(response, maxBytes);
       return {
         finalUrl: currentUrl,
         status: response.status,

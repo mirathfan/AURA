@@ -79,6 +79,9 @@ export type ProductMetadata = {
   extractionDiagnostics?: ProductExtractionDiagnostics;
   warningCodes?: ProductLinkWarningCode[];
   selectedImageReason?: string | null;
+  titleSource?: string | null;
+  priceSource?: string | null;
+  currencySource?: string | null;
 };
 
 export type ProductExtraction = {
@@ -177,7 +180,9 @@ type ZaraProductDetailsResponse = {
         type?: unknown;
         order?: unknown;
         url?: unknown;
-        extraInfo?: { deliveryUrl?: unknown };
+        deliveryUrl?: unknown;
+        delivery_url?: unknown;
+        extraInfo?: { deliveryUrl?: unknown; delivery_url?: unknown };
       }[];
     }[];
   };
@@ -1054,11 +1059,9 @@ function cleanRetailProductTitle(params: {
   const fit = params.fit ?? normalizeFit(title);
   const pattern = params.pattern ?? normalizePattern(title);
   const noun = productNounFromHints(params.categoryHints ?? inferCategoryHintsFromTitle(title), title);
-  const lowerTitle = title.toLowerCase();
   const shouldRebuild =
     isLicensedGraphicText(raw) ||
-    /\/[A-Za-z0-9&'.-]+/.test(raw) ||
-    (color && fit && !lowerTitle.includes(`${color} ${fit}`));
+    /\/[A-Za-z0-9&'.-]+/.test(raw);
   if (!shouldRebuild) {
     return title.charAt(0).toUpperCase() + title.slice(1);
   }
@@ -2097,6 +2100,16 @@ export function extractProductMetadataFromHtml(
   const nikeVariant = extractNikeSelectedVariantData(parsed.toString(), html);
   const nikeMetadata: Partial<ProductMetadata> = nikeVariant?.metadata ?? {};
   const generic = extractGenericProductDataSync(parsed.toString(), html);
+  const genericPrice = typeof generic.priceAmount === "number"
+    ? {
+        amount: generic.priceAmount,
+        currency: normalizeCurrencyCode(generic.currency),
+        display: cleanText(generic.price, 120) ??
+          (generic.currency ? `${generic.currency} ${generic.priceAmount}` : String(generic.priceAmount)),
+        source: generic.priceSource === "open_graph_price" ? "meta" as const : "json_ld" as const,
+      }
+    : null;
+  const selectedPrice = genericPrice ?? extractedPrice;
   const hmStructuredTitle = isHmProductUrl(parsed)
     ? jsonLd.title ?? hmJson.title ?? null
     : null;
@@ -2215,8 +2228,13 @@ export function extractProductMetadataFromHtml(
     brand: resolvedBrand,
     brandSource,
     title: cleanTitle,
+    titleSource: nikeMetadata.title
+      ? "nike_selected_variant"
+      : hmStructuredTitle
+        ? "hm_structured_title"
+        : generic.titleSource ?? null,
     price:
-      extractedPrice?.display ??
+      selectedPrice?.display ??
       generic.price ??
       jsonLd.price ??
       extractMeta(html, "product:price:amount") ??
@@ -2224,18 +2242,20 @@ export function extractProductMetadataFromHtml(
       extractMeta(html, "price") ??
       extractMeta(html, "twitter:data1"),
     currency:
-      extractedPrice?.currency ??
+      selectedPrice?.currency ??
       generic.currency ??
       jsonLd.currency ??
       extractMeta(html, "product:price:currency") ??
       extractMeta(html, "og:price:currency") ??
       extractMeta(html, "currency"),
-    priceAmount: extractedPrice?.amount ?? generic.priceAmount ?? jsonLd.priceAmount ?? null,
-    priceCurrency: extractedPrice?.currency ?? generic.currency ?? jsonLd.priceCurrency ?? null,
-    priceDisplay: extractedPrice?.display ?? generic.price ?? jsonLd.priceDisplay ?? null,
-    salePrice: extractedPrices.salePrice ?? generic.salePrice ?? null,
-    originalPrice: extractedPrices.originalPrice ?? generic.originalPrice ?? null,
-    priceExtractionSource: extractedPrice?.source ?? jsonLd.priceExtractionSource ?? null,
+    priceAmount: selectedPrice?.amount ?? generic.priceAmount ?? jsonLd.priceAmount ?? null,
+    priceCurrency: selectedPrice?.currency ?? generic.currency ?? jsonLd.priceCurrency ?? null,
+    priceDisplay: selectedPrice?.display ?? generic.price ?? jsonLd.priceDisplay ?? null,
+    salePrice: generic.salePrice ?? extractedPrices.salePrice ?? null,
+    originalPrice: generic.originalPrice ?? extractedPrices.originalPrice ?? null,
+    priceExtractionSource: selectedPrice?.source ?? jsonLd.priceExtractionSource ?? null,
+    priceSource: genericPrice ? generic.priceSource ?? "generic_ranked_price" : extractedPrice?.source ?? null,
+    currencySource: genericPrice ? generic.currencySource ?? generic.priceSource ?? "generic_ranked_price" : extractedPrice?.source ?? null,
     category: generic.category ?? null,
     subCategory: generic.subcategory ?? null,
     color,
@@ -2455,6 +2475,7 @@ export function handleAmazonLink(url: URL, html: string): AmazonExtractionResult
     retailer: "amazon",
     merchantBrand: "Amazon",
     title,
+    titleSource: generic.titleSource ?? "amazon_page_title",
     brand: status === "ready" ? brand : null,
     categoryHints: status === "ready" && inferred.category ? [inferred.category, inferred.subCategory ?? ""].filter(Boolean) : [],
     sku: asin,
@@ -2464,6 +2485,8 @@ export function handleAmazonLink(url: URL, html: string): AmazonExtractionResult
     priceCurrency: extractedPrice?.currency ?? null,
     priceDisplay: extractedPrice?.display ?? null,
     priceExtractionSource: extractedPrice?.source ?? null,
+    priceSource: extractedPrice ? generic.priceSource ?? "json_ld_offer" : null,
+    currencySource: extractedPrice ? generic.currencySource ?? "json_ld_offer" : null,
     productId: asin,
     priceUnavailable: !extractedPrice,
     availability: hasStructuredPrice ? generic.availability ?? null : null,
@@ -2559,17 +2582,25 @@ function isZaraHost(url: URL) {
   return hostname === "zara.com" || hostname.endsWith(".zara.com");
 }
 
-function zaraProductIdFromUrl(url: URL) {
+export function zaraProductIdFromUrl(url: URL) {
   const v1 = url.searchParams.get("v1");
   if (v1 && /^\d+$/.test(v1)) return v1;
-  return url.pathname.match(/-p0*(\d+)\.html$/i)?.[1] ?? null;
+  // Zara's product-details endpoint expects the exact eight-digit SEO id.
+  // Leading zeroes are significant and must not be stripped.
+  return url.pathname.match(/-p(\d+)\.html$/i)?.[1] ?? null;
 }
 
 function zaraImageUrl(value: unknown) {
-  const raw = String(value ?? "").trim().replace("{width}", "1200");
+  const nested = value && typeof value === "object"
+    ? (value as JsonObject).deliveryUrl ??
+      (value as JsonObject).delivery_url ??
+      (value as JsonObject).url ??
+      (value as JsonObject).src
+    : value;
+  const raw = String(nested ?? "").trim().replace(/\{width\}/g, "1200");
   if (!raw) return null;
   try {
-    const parsed = new URL(raw);
+    const parsed = new URL(raw.startsWith("//") ? `https:${raw}` : raw);
     return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.toString() : null;
   } catch {
     return null;
@@ -2586,7 +2617,13 @@ export function parseZaraProductDetailsResponse(
   const imageUrls = Array.from(new Set((selectedColor?.xmedia ?? [])
     .filter((media) => String(media.type ?? "").toLowerCase() === "image")
     .sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0))
-    .map((media) => zaraImageUrl(media.extraInfo?.deliveryUrl ?? media.url))
+    .map((media) => zaraImageUrl(
+      media.extraInfo?.deliveryUrl ??
+      media.extraInfo?.delivery_url ??
+      media.deliveryUrl ??
+      media.delivery_url ??
+      media.url,
+    ))
     .filter((imageUrl): imageUrl is string => !!imageUrl)));
   return {
     title: cleanText(product?.name, 220),
@@ -2632,6 +2669,7 @@ async function extractZaraProductFromApi(url: URL): Promise<ProductExtraction | 
     const normalized = normalizeProductUrl(url);
     const baseResult: ProductExtractionResult = {
       title: parsed.title,
+      titleSource: parsed.title ? "zara_product_details_name" : null,
       brand: "Zara",
       retailer: "Zara",
       color: parsed.color,
@@ -2675,6 +2713,7 @@ async function extractZaraProductFromApi(url: URL): Promise<ProductExtraction | 
         merchantBrand: "Zara",
         brand: "Zara",
         title: baseResult.title,
+        titleSource: baseResult.titleSource,
         description: baseResult.description,
         productDescription: baseResult.description,
         color: baseResult.color,
@@ -2778,6 +2817,32 @@ function blockedStoreError(status: number | null, host: string) {
   });
 }
 
+export function productPageHttpError(status: number, host: string) {
+  if (isBlockedHttpStatus(status)) return blockedStoreError(status, host);
+  if (status === 404) {
+    return new ProductLinkError("That link did not return a supported product page.", "unsupported_url", {
+      recoverable: false,
+      reason: "http_404",
+      status,
+    });
+  }
+  return new ProductLinkError(
+    "That product page could not be read. Paste another link or add from screenshot/photo.",
+    "fetch_failed",
+    {
+      recoverable: true,
+      reason: `http_${status}`,
+      status,
+      host,
+    },
+  );
+}
+
+export function looksLikeBlockedProductPage(html: string) {
+  const sample = html.slice(0, 40_000);
+  return /(?:bm-verify=|\/_sec\/verify|triggerInterstitialChallenge|<title>\s*Access Denied\s*<\/title>|verify you are human|robot check|captcha required)/i.test(sample);
+}
+
 export async function fetchResolvedProductPage(url: URL): Promise<FetchedProductPage> {
   let originalStatus: number | null = null;
   let originalError: unknown = null;
@@ -2809,16 +2874,12 @@ export async function fetchResolvedProductPage(url: URL): Promise<FetchedProduct
           hasPath: url.pathname.length > 1,
           status: response.status,
         });
-        throw blockedStoreError(response.status, url.hostname);
+        throw productPageHttpError(response.status, url.hostname);
       }
-      if (response.status === 404) {
-        throw new ProductLinkError("That link did not return a supported product page.", "unsupported_url", {
-          recoverable: false,
-          reason: "http_404",
-          status: response.status,
-        });
-      }
-      throw new ProductLinkError("That product page could not be read. Paste another link or add from screenshot/photo.", "fetch_failed");
+      throw productPageHttpError(response.status, url.hostname);
+    }
+    if (looksLikeBlockedProductPage(response.text)) {
+      throw blockedStoreError(response.status, url.hostname);
     }
     return {
       html: response.text.slice(0, MAX_HTML_CHARS),
@@ -3002,6 +3063,9 @@ export async function extractProductFromUrl(rawUrl: string): Promise<ProductExtr
       extractionMode: diagnostics?.hadRetailerAdapter ? "dedicated" : "generic",
       candidateImageCount: extraction.imageCandidateCount ?? extraction.imageUrls.length,
       missingFields: diagnostics?.missingFields ?? [],
+      titleSource: diagnostics?.titleSource ?? extraction.metadata.titleSource ?? null,
+      priceSource: diagnostics?.priceSource ?? extraction.metadata.priceSource ?? null,
+      currencySource: diagnostics?.currencySource ?? extraction.metadata.currencySource ?? null,
       durationMs: Date.now() - startedAt,
       responseContract: "normalized_internal_v2",
     });
