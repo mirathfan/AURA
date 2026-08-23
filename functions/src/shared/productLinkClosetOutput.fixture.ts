@@ -147,8 +147,8 @@ export function runProductLinkClosetOutputFixture() {
     pass("Foot Locker sneaker draft", footLocker.draft.brand === "Nike" && footLocker.draft.styleId === "CN8490-100" && footLocker.draft.category === "footwear" && footLocker.draft.availableSizes instanceof Array && footLocker.draft.availableSizes.includes("10")),
     pass("StockX conservative price draft", stockX.draft.brand === "Nike" && stockX.draft.styleId === "DD1391-100" && stockX.draft.category === "footwear" && stockX.draft.priceAmount == null && stockX.extraction.metadata.marketPriceUnavailable === true),
     pass("Amazon conservative draft", amazon.draft.productId === "B08N5WRWNW" && amazon.draft.category === "footwear" && amazon.draft.priceAmount == null && amazon.extraction.metadata.priceUnavailable === true && amazon.extraction.metadata.brand !== "Amazon"),
-    pass("Generic Shopify apparel draft", shopify.draft.name === "Denim Shirt - Black" && shopify.draft.brand === "Shop Brand" && shopify.draft.category === "top" && shopify.draft.subCategory === "shirt" && shopify.draft.purchasePrice === 78 && shopify.draft.retailPrice === 98),
-    pass("Open Graph-only draft", openGraph.draft.name === "Canvas Tote - Natural" && openGraph.draft.category === "accessory" && openGraph.draft.subCategory === "tote" && !!openGraph.draft.originalImageUrl),
+    pass("Generic Shopify apparel draft", shopify.draft.name === "Denim Shirt" && shopify.draft.brand === "Shop Brand" && shopify.draft.category === "top" && shopify.draft.subCategory === "shirt" && shopify.draft.purchasePrice === 78 && shopify.draft.retailPrice === 98),
+    pass("Open Graph-only draft", openGraph.draft.name === "Canvas Tote" && openGraph.draft.category === "accessory" && openGraph.draft.subCategory === "tote" && !!openGraph.draft.originalImageUrl),
     pass("Preview/import core consistency", consistencyCases.every(assertPreviewImportConsistency)),
     pass("Confidence fields present", nike.extraction.metadata.categoryConfidence !== "missing" && fearOfGod.extraction.metadata.colorConfidence === "high" && openGraph.extraction.metadata.priceConfidence === "missing"),
   ];

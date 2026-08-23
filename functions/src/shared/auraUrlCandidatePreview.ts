@@ -241,6 +241,36 @@ export function brandFromSourceUrl(sourceUrl?: string | null) {
   }
 }
 
+function remoteImageFailureReason(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const status = message.match(/upstream status code:\s*(\d{3})/i)?.[1];
+  if (status) return `http_${status}`;
+  if (/error while downloading file|failed to download image/i.test(message)) return "image_download_failed";
+  if (/invalid image|unsupported image/i.test(message)) return "invalid_image";
+  return null;
+}
+
+export async function firstUsableProductImageCandidate<T>(params: {
+  imageUrls: string[];
+  attempt: (imageUrl: string) => Promise<T | null>;
+  maxAttempts?: number;
+}) {
+  const attemptedUrls = params.imageUrls.slice(0, Math.max(1, Math.min(params.maxAttempts ?? 6, 6)));
+  const failed = new Map<string, string>();
+  for (const imageUrl of attemptedUrls) {
+    try {
+      const value = await params.attempt(imageUrl);
+      if (value != null) return { value, imageUrl, failed };
+      failed.set(imageUrl, "no_candidate_metadata");
+    } catch (error) {
+      const reason = remoteImageFailureReason(error);
+      if (!reason) throw error;
+      failed.set(imageUrl, reason);
+    }
+  }
+  return { value: null, imageUrl: null, failed };
+}
+
 function isLikelyProductLinkForReview(sourceUrl?: string | null) {
   try {
     const url = new URL(String(sourceUrl ?? ""));
@@ -410,8 +440,8 @@ export async function buildUrlCandidatePreview(params: {
       : undefined,
     preferNikeFootwearLeftProfile: params.preferNikeFootwearLeftProfile,
   });
-  const rankedImageUrls = rankedImages.map((image) => image.url);
-  const primaryImageUrl = rankedImageUrls[0] ?? null;
+  let rankedImageUrls = rankedImages.map((image) => image.url);
+  let primaryImageUrl = rankedImageUrls[0] ?? null;
   const selectedImageReason =
     rankedImages[0]?.selectedImageReason === NIKE_FOOTWEAR_LEFT_PROFILE_REASON
       ? NIKE_FOOTWEAR_LEFT_PROFILE_REASON
@@ -431,12 +461,38 @@ export async function buildUrlCandidatePreview(params: {
     rankedImageCount: rankedImageUrls.length,
   });
 
-  let candidates = primaryImageUrl
-    ? await extractImageCandidates({
-        client: params.client,
-        imageGroups: [[primaryImageUrl]],
+  const imageCandidateAttempt = primaryImageUrl
+    ? await firstUsableProductImageCandidate({
+        imageUrls: rankedImageUrls,
+        attempt: async (imageUrl) => {
+          const extracted = await extractImageCandidates({
+            client: params.client,
+            imageGroups: [[imageUrl]],
+          });
+          return extracted[0] ?? null;
+        },
       })
-    : [];
+    : { value: null, imageUrl: null, failed: new Map<string, string>() };
+  if (imageCandidateAttempt.failed.size) {
+    logger.warn("product_link_image_candidate_download_failed", {
+      sourceDomain: (() => {
+        try { return new URL(params.metadata.sourceUrl).hostname; } catch { return null; }
+      })(),
+      failedCandidateCount: imageCandidateAttempt.failed.size,
+      failureReasons: Array.from(new Set(imageCandidateAttempt.failed.values())),
+      recoveredWithAlternateCandidate: !!imageCandidateAttempt.imageUrl,
+    });
+  }
+  const failedUrls = new Set(imageCandidateAttempt.failed.keys());
+  rankedImageUrls = rankedImageUrls.filter((url) => !failedUrls.has(url));
+  if (imageCandidateAttempt.imageUrl) {
+    rankedImageUrls = [
+      imageCandidateAttempt.imageUrl,
+      ...rankedImageUrls.filter((url) => url !== imageCandidateAttempt.imageUrl),
+    ];
+  }
+  primaryImageUrl = rankedImageUrls[0] ?? null;
+  let candidates = imageCandidateAttempt.value ? [imageCandidateAttempt.value] : [];
   if (!candidates.length && primaryImageUrl) {
     candidates = fallbackImageCandidates([[primaryImageUrl]]);
   }

@@ -17,6 +17,7 @@ import {
 import { filterReachableProductImageUrls } from "./auraCandidatePreview";
 import {
   canUseHmBlockedStorePreviewFallback,
+  firstUsableProductImageCandidate,
   hmSanitizedClientPreview,
 } from "./auraUrlCandidatePreview";
 import { runProductExtractionPipelineFixture } from "./productExtractionPipeline.fixture";
@@ -202,6 +203,35 @@ describe("backend-owned product extraction migration", () => {
     expect(result.summary.fetchFailedCount).toBe(2);
   });
 
+  test("downstream image download skips a stale primary and uses the next candidate", async () => {
+    const first = "https://cdn.example.com/products/stale-primary.jpg";
+    const second = "https://cdn.example.com/products/live-secondary.jpg";
+    const result = await firstUsableProductImageCandidate({
+      imageUrls: [first, second],
+      attempt: async (url) => {
+        if (url === first) throw new Error("400 Error while downloading file. Upstream status code: 404.");
+        return { url };
+      },
+    });
+    expect(result.value).toEqual({ url: second });
+    expect(result.imageUrl).toBe(second);
+    expect(Array.from(result.failed.values())).toEqual(["http_404"]);
+  });
+
+  test("downstream image download returns no candidate when all bounded candidates fail", async () => {
+    const result = await firstUsableProductImageCandidate({
+      imageUrls: [
+        "https://cdn.example.com/products/stale-primary.jpg",
+        "https://cdn.example.com/products/stale-secondary.jpg",
+      ],
+      attempt: async () => {
+        throw new Error("400 Error while downloading file. Upstream status code: 404.");
+      },
+    });
+    expect(result.value).toBeNull();
+    expect(result.failed.size).toBe(2);
+  });
+
   test("product titles outrank color and size variant labels", () => {
     const selected = selectBestProductTitle([
       { title: "AGAVE GREEN HEATHER S", source: "json_ld_product_name", confidence: "high" },
@@ -212,6 +242,15 @@ describe("backend-owned product extraction migration", () => {
       title: "Hawthorn Shirt",
       source: "embedded_product_title",
     });
+  });
+
+  test("product titles remove separated variant suffixes and storefront labels", () => {
+    expect(selectBestProductTitle([
+      { title: "Hawthorn Shirt - AGAVE GREEN HEATHER S", source: "embedded_product_title", confidence: "high" },
+    ]).title).toBe("Hawthorn Shirt");
+    expect(selectBestProductTitle([
+      { title: "Vanson Wool Bomber Jacket Black | US", source: "open_graph_title", confidence: "medium" },
+    ]).title).toBe("Vanson Wool Bomber Jacket");
   });
 
   test("Tentree-like mixed structured data selects the product title and active sale offer", () => {
@@ -321,6 +360,15 @@ describe("backend-owned product extraction migration", () => {
     ], "USD");
     expect(selected.currency).toBe("USD");
     expect(selected.amount).toBe(26);
+  });
+
+  test("authoritative storefront currency fills a missing offer currency", () => {
+    expect(selectBestProductPrice([
+      { amount: 40.8, source: "embedded_product_price", title: "Hawthorn Shirt" },
+    ], "USD")).toMatchObject({
+      amount: 40.8,
+      currency: "USD",
+    });
   });
 
   test("retailer detection is backend-owned before fetch", () => {

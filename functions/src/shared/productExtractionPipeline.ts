@@ -894,6 +894,27 @@ const PRODUCT_TITLE_NOUN_RE = /\b(?:shirt|t-?shirt|tee|polo|hoodie|sweatshirt|sw
 const PRODUCT_SIZE_TOKEN_RE = /^(?:xxs|xs|s|m|l|xl|xxl|2xl|3xl|\d{1,2}(?:\.5)?|one\s+size)$/i;
 const PRODUCT_COLOR_WORD_RE = /^(?:black|white|grey|gray|blue|navy|green|red|pink|purple|brown|tan|beige|cream|ivory|yellow|orange|silver|gold|olive|khaki|charcoal|natural|heather|marl|agave|ecru|stone)$/i;
 
+function cleanProductTitleVariantSuffix(value?: string | null) {
+  let title = cleanText(value, 220);
+  if (!title) return null;
+  title = title.replace(/\s*\|\s*(?:US|USA|UK|CA|EU|AU|NZ)\s*$/i, "").trim();
+  const separated = title.match(/^(.*?)\s+(?:-|–|—|\|)\s+(.+)$/);
+  if (separated?.[1] && separated[2] && looksLikeProductVariantTitle(separated[2])) {
+    title = separated[1].trim();
+  }
+  const words = title.split(/\s+/);
+  if (PRODUCT_TITLE_NOUN_RE.test(title) && words.length > 2) {
+    for (let suffixLength = Math.min(3, words.length - 2); suffixLength >= 1; suffixLength -= 1) {
+      const suffix = words.slice(-suffixLength);
+      if (suffix.every((word) => PRODUCT_COLOR_WORD_RE.test(word))) {
+        title = words.slice(0, -suffixLength).join(" ");
+        break;
+      }
+    }
+  }
+  return title;
+}
+
 export function looksLikeProductVariantTitle(value?: string | null) {
   const title = cleanText(value, 220);
   if (!title) return true;
@@ -936,7 +957,7 @@ export function selectBestProductTitle(candidates: Array<{
   };
   const ranked = candidates
     .map((candidate, index) => {
-      const title = cleanText(candidate.title, 220);
+      const title = cleanProductTitleVariantSuffix(candidate.title);
       if (!title) return null;
       let score = sourceWeight(candidate.source) + confidenceWeight[candidate.confidence ?? "low"];
       if (PRODUCT_TITLE_NOUN_RE.test(title)) score += 35;
@@ -1002,7 +1023,7 @@ export function selectBestProductPrice(candidates: Array<{
     })
     .filter((entry): entry is NonNullable<typeof entry> => !!entry)
     .sort((a, b) => b.score - a.score || a.index - b.index);
-  return ranked[0] ?? {
+  const selected = ranked[0] ?? {
     amount: null,
     salePrice: null,
     originalPrice: null,
@@ -1011,6 +1032,8 @@ export function selectBestProductPrice(candidates: Array<{
     score: -1,
     index: -1,
   };
+  if (selected.currency || !normalizedPreferredCurrency || selected.amount == null) return selected;
+  return { ...selected, currency: normalizedPreferredCurrency };
 }
 
 function mergeScalar<T extends keyof ProductExtractionResult>(
