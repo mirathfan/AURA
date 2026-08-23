@@ -301,6 +301,15 @@ describe("backend-owned product extraction migration", () => {
     expect(metadata.title).toBe("Vanson Wool Bomber Jacket");
   });
 
+  test("AllSaints live-style storefront suffix and color are removed from the product title", () => {
+    const metadata = extractProductMetadataFromHtml(
+      "https://www.allsaints.com/us/vanson-wool-bomber-jacket/USM001LF-5.html",
+      `<meta property="og:title" content="Vanson Wool Bomber Jacket Black | US" />
+       <meta property="og:image" content="https://media.i.allsaints.com/vanson-main.jpg" />`,
+    );
+    expect(metadata.title).toBe("Vanson Wool Bomber Jacket");
+  });
+
   test("price ranking prefers product evidence, storefront currency, and valid sale pricing", () => {
     const selected = selectBestProductPrice([
       {
@@ -368,6 +377,23 @@ describe("backend-owned product extraction migration", () => {
     ], "USD")).toMatchObject({
       amount: 40.8,
       currency: "USD",
+    });
+  });
+
+  test("Shopify storefront currency fills an offer that omits currency", () => {
+    const metadata = extractProductMetadataFromHtml(
+      "https://www.tentree.com/products/hawthorn-shirt-agave-green-heather",
+      `<script>Shopify.currency = {"active":"USD","rate":"1.0"};</script>
+       <script type="application/json">{"product":{
+         "title":"Hawthorn Shirt - AGAVE GREEN HEATHER S",
+         "price":"40.80",
+         "images":["https://cdn.shopify.com/products/hawthorn-shirt-main.jpg"]
+       }}</script>`,
+    );
+    expect(metadata).toMatchObject({
+      title: "Hawthorn Shirt",
+      priceAmount: 40.8,
+      priceCurrency: "USD",
     });
   });
 

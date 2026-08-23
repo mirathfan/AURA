@@ -13,6 +13,7 @@ import {
   normalizeProductUrl,
   rankGenericProductImages,
   retailerAdapters,
+  selectBestProductTitle,
   type ProductExtractionDiagnostics,
   type ProductExtractionResult,
   type ProductFieldConfidence,
@@ -1054,6 +1055,12 @@ function cleanRetailProductTitle(params: {
     .replace(/\s*\/\s*/g, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
+
+  title = selectBestProductTitle([{
+    title,
+    source: "retailer_product_title",
+    confidence: "high",
+  }]).title ?? title;
 
   const color = cleanText(params.color ?? extractColorFromText(raw), 80)?.toLowerCase() ?? null;
   const fit = params.fit ?? normalizeFit(title);

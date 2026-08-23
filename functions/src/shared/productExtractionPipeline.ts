@@ -1566,6 +1566,12 @@ function storefrontCurrencyFromHtml(html: string) {
     12,
   )?.toUpperCase();
   if (explicit && /^[A-Z]{3}$/.test(explicit)) return explicit;
+  const shopifyCurrency = [
+    html.match(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Z]{3})["']/i)?.[1],
+    html.match(/\bdata-currency=["']([A-Z]{3})["']/i)?.[1],
+    html.match(/["']paymentSettings["']\s*:\s*\{[^}]*["']currencyCode["']\s*:\s*["']([A-Z]{3})["']/i)?.[1],
+  ].find((value) => !!value)?.toUpperCase();
+  if (shopifyCurrency) return shopifyCurrency;
   const locale = cleanText(metaContent(html, "og:locale"), 20)?.replace("-", "_").toUpperCase();
   const country = locale?.split("_")[1] ?? null;
   const currencies: Record<string, string> = {
