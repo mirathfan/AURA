@@ -24,6 +24,7 @@ export type ProductLinkFailureCode =
   | ProductLinkWarningCode
   | "INVALID_URL"
   | "UNSAFE_URL"
+  | "UNSUPPORTED_URL"
   | "NO_PRODUCT_METADATA"
   | "DRAFT_FAILED"
   | "UNKNOWN_ERROR";
@@ -100,6 +101,9 @@ export type ProductLinkLogMetadata = {
   durationMs?: number | null;
   resultStatus?: ProductLinkResultStatus;
   featureFlagEnabled?: boolean;
+  responseContract?: "compatibility_v1" | "normalized_v2" | "normalized_internal_v2";
+  fallbackPath?: string | null;
+  httpStatus?: number | null;
   primaryImageHost?: string | null;
 };
 
@@ -223,6 +227,7 @@ export function productLinkFailureCodeForError(
   const code = String((error as ErrorLike | null)?.code ?? "").toLowerCase();
   if (code === "invalid_url") return "INVALID_URL";
   if (code === "unsafe_url") return "UNSAFE_URL";
+  if (code === "unsupported_url") return "UNSUPPORTED_URL";
   if (code === "blocked_store") return "FETCH_BLOCKED";
   if (code === "fetch_failed") return "FETCH_FAILED";
   if (code === "no_images") return phase === "import" ? "IMPORT_REQUIRES_IMAGE" : "NO_PRODUCT_IMAGE";
@@ -251,6 +256,8 @@ export function productLinkUserMessageForFailure(
       return "That product link doesn't look valid.";
     case "UNSAFE_URL":
       return "That product link isn't safe to fetch.";
+    case "UNSUPPORTED_URL":
+      return "That link did not return a supported product page.";
     case "NO_PRODUCT_METADATA":
     case "EMPTY_HTML":
     case "PARTIAL_EXTRACTION":
@@ -301,6 +308,8 @@ export function buildProductLinkLogMetadata(params: {
   durationMs?: number | null;
   featureFlagEnabled?: boolean;
   resultStatus?: ProductLinkResultStatus;
+  fallbackPath?: string | null;
+  httpStatus?: number | null;
 }): ProductLinkLogMetadata {
   const diagnostics = params.diagnostics ?? params.metadata?.extractionDiagnostics ?? null;
   const metadataWithEvidence: MetadataLike | null = params.metadata
@@ -357,6 +366,9 @@ export function buildProductLinkLogMetadata(params: {
         missingFields,
       }),
     featureFlagEnabled: params.featureFlagEnabled,
+    responseContract: params.featureFlagEnabled ? "normalized_v2" : "compatibility_v1",
+    fallbackPath: params.fallbackPath ?? null,
+    httpStatus: params.httpStatus ?? null,
     primaryImageHost:
       diagnostics?.primaryImageHost ??
       hostFromUrl(params.primaryImageUrl ?? params.metadata?.imageUrl ?? params.metadata?.primaryImage ?? null),

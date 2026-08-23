@@ -85,6 +85,7 @@ export type NormalizedProductUrl = {
   normalizedUrl: string;
   canonicalDomain: string;
   sourceDomain: string;
+  retailerId: string | null;
   retailer: string | null;
   amazonAsin: string | null;
 };
@@ -149,6 +150,9 @@ const AMAZON_DOMAINS = [
   "amazon.com.au",
 ];
 const RETAILERS: Array<{ id: string; label: string; domains: string[] }> = [
+  { id: "hm", label: "H&M", domains: ["hm.com"] },
+  { id: "zara", label: "Zara", domains: ["zara.com"] },
+  { id: "nike", label: "Nike", domains: ["nike.com"] },
   { id: "fearofgod", label: "Fear of God", domains: ["fearofgod.com"] },
   { id: "allsaints", label: "AllSaints", domains: ["allsaints.com"] },
   { id: "macys", label: "Macy's", domains: ["macys.com"] },
@@ -156,6 +160,8 @@ const RETAILERS: Array<{ id: string; label: string; domains: string[] }> = [
   { id: "footlocker", label: "Foot Locker", domains: ["footlocker.com", "footlocker.ca", "footlocker.eu"] },
   { id: "stockx", label: "StockX", domains: ["stockx.com"] },
   { id: "amazon", label: "Amazon", domains: AMAZON_DOMAINS },
+  { id: "adidas", label: "Adidas", domains: ["adidas.com"] },
+  { id: "uniqlo", label: "Uniqlo", domains: ["uniqlo.com"] },
 ];
 
 type JsonObject = Record<string, unknown>;
@@ -258,6 +264,7 @@ export function normalizeProductUrl(rawUrl: string | URL): NormalizedProductUrl 
     normalizedUrl: url.toString(),
     canonicalDomain: normalizedHost(url.hostname),
     sourceDomain: normalizedHost(url.hostname),
+    retailerId: retailer?.id ?? null,
     retailer: retailer?.label ?? null,
     amazonAsin,
   };
@@ -1138,6 +1145,42 @@ function adapterResult(ctx: ProductExtractionContext, id: string, fields: Partia
 }
 
 export const retailerAdapters: RetailerAdapter[] = [
+  {
+    id: "hm",
+    domains: ["hm.com"],
+    canHandle: (url) => hostMatches(url.hostname, ["hm.com"]),
+    extract: (ctx) =>
+      adapterResult(ctx, "hm", {
+        retailer: "H&M",
+        brand: (firstFromSources(ctx, "brand") as string | null) ?? "H&M",
+        title: cleanupTitle(firstFromSources(ctx, "title") as string | null, "H&M"),
+        color: (firstFromSources(ctx, "color") as string | null) ?? colorFromText(sourceText(ctx)),
+      }),
+  },
+  {
+    id: "zara",
+    domains: ["zara.com"],
+    canHandle: (url) => hostMatches(url.hostname, ["zara.com"]),
+    extract: (ctx) =>
+      adapterResult(ctx, "zara", {
+        retailer: "Zara",
+        brand: (firstFromSources(ctx, "brand") as string | null) ?? "Zara",
+        title: cleanupTitle(firstFromSources(ctx, "title") as string | null, "Zara"),
+        color: (firstFromSources(ctx, "color") as string | null) ?? colorFromText(sourceText(ctx)),
+      }),
+  },
+  {
+    id: "nike",
+    domains: ["nike.com"],
+    canHandle: (url) => hostMatches(url.hostname, ["nike.com"]),
+    extract: (ctx) =>
+      adapterResult(ctx, "nike", {
+        retailer: "Nike",
+        brand: (firstFromSources(ctx, "brand") as string | null) ?? "Nike",
+        title: cleanupTitle(firstFromSources(ctx, "title") as string | null, "Nike"),
+        color: (firstFromSources(ctx, "color") as string | null) ?? colorFromText(sourceText(ctx)),
+      }),
+  },
   {
     id: "fearofgod",
     domains: ["fearofgod.com"],

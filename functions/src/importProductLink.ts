@@ -36,13 +36,15 @@ function messageForError(error: unknown) {
 
 function codeForError(
   error: unknown,
-): "invalid-argument" | "failed-precondition" | "internal" {
+): "invalid-argument" | "failed-precondition" | "unavailable" | "internal" {
   if (!(error instanceof ProductLinkError)) return "internal";
   switch (error.code) {
     case "invalid_url":
     case "unsafe_url":
-    case "fetch_failed":
+    case "unsupported_url":
       return "invalid-argument";
+    case "fetch_failed":
+      return "unavailable";
     case "blocked_store":
     case "no_metadata":
     case "no_images":

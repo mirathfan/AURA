@@ -191,7 +191,7 @@ function safeHmImageUrls(preview: ClientProductLinkPreview | null) {
   });
 }
 
-function previewFromSafeHmClientFallback(
+export function previewFromSafeHmClientFallback(
   rawUrl: string,
   preview: ClientProductLinkPreview | null,
 ): ClosetProductLinkPreview | null {
@@ -277,9 +277,10 @@ function previewFromSafeHmClientFallback(
 
 export async function previewProductLinkForCloset(url: string) {
   const functions = getFunctions(app);
-  const callable = httpsCallable<
+  type ExtractProductRequest =
     {
       url: string;
+      fallbackMode?: "hm_blocked_client_preview";
       linkPreview?: {
         sourceUrl: string;
         title?: string | null;
@@ -298,13 +299,30 @@ export async function previewProductLinkForCloset(url: string) {
         sku?: string | null;
         productId?: string | null;
       } | null;
-    },
-    PreviewProductLinkResponse
-  >(functions, "previewProductLink");
-  let linkPreview: ClientProductLinkPreview | null = null;
+    };
+  const callable = httpsCallable<ExtractProductRequest, PreviewProductLinkResponse>(
+    functions,
+    "extractProductFromUrl",
+  );
+  const compatibilityCallable = httpsCallable<ExtractProductRequest, PreviewProductLinkResponse>(
+    functions,
+    "previewProductLink",
+  );
+  const callBackend = async (request: ExtractProductRequest) => {
+    try {
+      return await callable(request);
+    } catch (error) {
+      const code = String((error as { code?: unknown })?.code ?? "").toLowerCase();
+      if (code !== "functions/not-found" && code !== "functions/unimplemented") throw error;
+      // Allows backend-first and mobile-first staged rollouts without breaking
+      // the released preview contract.
+      return compatibilityCallable(request);
+    }
+  };
   try {
-    linkPreview = await buildClientProductLinkPreview(url);
-    const result = await callable({ url, linkPreview });
+    // Firebase is the primary authority. Client HTML is fetched only after the
+    // backend explicitly reports a recoverable blocked-store response.
+    const result = await callBackend({ url });
     return result.data.preview;
   } catch (error) {
     if (isRateLimitError(error)) {
@@ -315,6 +333,7 @@ export async function previewProductLinkForCloset(url: string) {
     }
     const normalized = normalizePreviewError(error);
     if (normalized.blockedStore) {
+      const linkPreview = await buildClientProductLinkPreview(url);
       const fallback = previewFromSafeHmClientFallback(url, linkPreview);
       if (fallback) {
         if (__DEV__) {
@@ -323,7 +342,23 @@ export async function previewProductLinkForCloset(url: string) {
             title: fallback.metadata.title,
           });
         }
-        return fallback;
+        try {
+          const result = await callBackend({
+            url,
+            linkPreview,
+            fallbackMode: "hm_blocked_client_preview",
+          });
+          return result.data.preview;
+        } catch (fallbackError) {
+          if (__DEV__) {
+            console.log("[PRODUCT_LINK] backend fallback normalization failed; using local H&M fallback", {
+              error: getFriendlyErrorMessage(fallbackError),
+            });
+          }
+          // Preserve the pre-migration fallback if the second callable is
+          // unavailable or a released backend has not deployed fallbackMode.
+          return fallback;
+        }
       }
     }
     throw normalized;

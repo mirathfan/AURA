@@ -8,9 +8,11 @@ import {
   validateSafeUrlForFetch,
 } from "./safeFetch";
 import {
+  buildProductExtractionDiagnostics,
   extractGenericProductDataSync,
   normalizeProductUrl,
   rankGenericProductImages,
+  retailerAdapters,
   type ProductExtractionDiagnostics,
   type ProductExtractionResult,
   type ProductFieldConfidence,
@@ -125,6 +127,7 @@ const DEBUG_PRODUCT_LINK_LOGS =
     (process.env.AURA_DEBUG === "1" || process.env.AURA_DEBUG === "true"));
 
 export type ProductImageExtractionSource =
+  | "retailer_adapter"
   | "json_ld"
   | "og_image"
   | "twitter"
@@ -163,12 +166,30 @@ type AmazonExtractionResult = {
   };
 };
 
+type ZaraProductDetailsResponse = {
+  name?: unknown;
+  detail?: {
+    description?: unknown;
+    colors?: {
+      name?: unknown;
+      productId?: unknown;
+      xmedia?: {
+        type?: unknown;
+        order?: unknown;
+        url?: unknown;
+        extraInfo?: { deliveryUrl?: unknown };
+      }[];
+    }[];
+  };
+}[];
+
 export class ProductLinkError extends Error {
   constructor(
     message: string,
     public readonly code:
       | "invalid_url"
       | "unsafe_url"
+      | "unsupported_url"
       | "fetch_failed"
       | "blocked_store"
       | "no_metadata"
@@ -2533,6 +2554,163 @@ function isBlockedHttpStatus(status: number) {
   return status === 401 || status === 403 || status === 429;
 }
 
+function isZaraHost(url: URL) {
+  const hostname = url.hostname.toLowerCase();
+  return hostname === "zara.com" || hostname.endsWith(".zara.com");
+}
+
+function zaraProductIdFromUrl(url: URL) {
+  const v1 = url.searchParams.get("v1");
+  if (v1 && /^\d+$/.test(v1)) return v1;
+  return url.pathname.match(/-p0*(\d+)\.html$/i)?.[1] ?? null;
+}
+
+function zaraImageUrl(value: unknown) {
+  const raw = String(value ?? "").trim().replace("{width}", "1200");
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseZaraProductDetailsResponse(
+  productId: string,
+  payload: ZaraProductDetailsResponse,
+) {
+  const product = payload[0];
+  const colors = product?.detail?.colors ?? [];
+  const selectedColor = colors.find((color) => String(color.productId ?? "") === productId) ?? colors[0];
+  const imageUrls = Array.from(new Set((selectedColor?.xmedia ?? [])
+    .filter((media) => String(media.type ?? "").toLowerCase() === "image")
+    .sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0))
+    .map((media) => zaraImageUrl(media.extraInfo?.deliveryUrl ?? media.url))
+    .filter((imageUrl): imageUrl is string => !!imageUrl)));
+  return {
+    title: cleanText(product?.name, 220),
+    description: cleanText(product?.detail?.description, 900),
+    color: cleanText(selectedColor?.name, 80),
+    imageUrls,
+  };
+}
+
+async function extractZaraProductFromApi(url: URL): Promise<ProductExtraction | null> {
+  if (!isZaraHost(url)) return null;
+  const productId = zaraProductIdFromUrl(url);
+  if (!productId) return null;
+  const detailsPath = `${url.pathname.split("/").slice(0, 3).join("/")}/products-details`;
+  const detailsUrl = new URL(detailsPath, url.origin);
+  detailsUrl.searchParams.set("productIds", productId);
+  const startedAt = Date.now();
+  try {
+    const response = await safeFetch(detailsUrl, {
+      expectedKind: "json",
+      timeoutMs: PRODUCT_LINK_FETCH_TIMEOUT_MS,
+      maxBytes: 2 * 1024 * 1024,
+      maxRedirects: 3,
+      headers: browserProductHeaders(url, "json"),
+    });
+    if (!response.ok) {
+      logger.warn("product_link_zara_adapter_failed", {
+        normalizedDomain: url.hostname,
+        adapterName: "zara",
+        httpStatus: response.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return null;
+    }
+    const parsed = parseZaraProductDetailsResponse(
+      productId,
+      JSON.parse(response.text) as ZaraProductDetailsResponse,
+    );
+    const rawImageUrls = parsed.imageUrls;
+    const imageUrls = (await filterSafeExternalImageUrls(Array.from(new Set(rawImageUrls)), {
+      domain: url.hostname,
+    })).slice(0, 12);
+    const normalized = normalizeProductUrl(url);
+    const baseResult: ProductExtractionResult = {
+      title: parsed.title,
+      brand: "Zara",
+      retailer: "Zara",
+      color: parsed.color,
+      description: parsed.description,
+      images: imageUrls.map((imageUrl) => ({
+        url: imageUrl,
+        source: "adapter:zara",
+        selectedImageReason: "zara_product_details_primary_image",
+      })),
+      primaryImage: imageUrls[0] ?? null,
+      canonicalUrl: normalized.normalizedUrl,
+      sourceDomain: normalized.sourceDomain,
+      productId,
+      adapterName: "zara",
+      extractionSource: "retailer_adapter",
+      selectedImageReason: imageUrls.length ? "zara_product_details_primary_image" : null,
+      confidence: 0.94,
+      titleConfidence: parsed.title ? "high" : "missing",
+      brandConfidence: "high",
+      priceConfidence: "missing",
+      imageConfidence: imageUrls.length ? "high" : "missing",
+      categoryConfidence: "missing",
+      debug: { sources: ["adapter:zara"] },
+    };
+    const diagnostics = buildProductExtractionDiagnostics(baseResult, normalized);
+    if (!baseResult.title && !imageUrls.length && !baseResult.description) return null;
+    logger.info("product_link_zara_adapter_succeeded", {
+      normalizedDomain: normalized.canonicalDomain,
+      retailer: "Zara",
+      adapterName: "zara",
+      extractionSource: "retailer_adapter",
+      candidateImageCount: imageUrls.length,
+      missingFields: diagnostics.missingFields,
+      durationMs: Date.now() - startedAt,
+    });
+    return {
+      metadata: {
+        sourceUrl: normalized.normalizedUrl,
+        domain: normalized.canonicalDomain,
+        retailer: "Zara",
+        merchantBrand: "Zara",
+        brand: "Zara",
+        title: baseResult.title,
+        description: baseResult.description,
+        productDescription: baseResult.description,
+        color: baseResult.color,
+        displayColor: baseResult.color,
+        displayColors: baseResult.color ? [baseResult.color] : [],
+        canonicalUrl: baseResult.canonicalUrl,
+        productId,
+        adapterName: "zara",
+        extractionSource: "retailer_adapter",
+        selectedImageReason: baseResult.selectedImageReason,
+        titleConfidence: baseResult.titleConfidence,
+        brandConfidence: baseResult.brandConfidence,
+        priceConfidence: baseResult.priceConfidence,
+        imageConfidence: baseResult.imageConfidence,
+        categoryConfidence: baseResult.categoryConfidence,
+        extractionDiagnostics: diagnostics,
+        warningCodes: diagnostics.warningCodes,
+      },
+      imageUrls,
+      imageExtractionSource: "retailer_adapter",
+      imageCandidateCount: imageUrls.length,
+      selectedImageReason: baseResult.selectedImageReason,
+      confidence: baseResult.confidence,
+      status: baseResult.title && imageUrls.length ? "ready" : "needs_review",
+    };
+  } catch (error) {
+    logger.warn("product_link_zara_adapter_failed", {
+      normalizedDomain: url.hostname,
+      adapterName: "zara",
+      durationMs: Date.now() - startedAt,
+      errorCode: error instanceof SafeFetchError ? error.code : "unexpected_error",
+    });
+    return null;
+  }
+}
+
 async function tryHmProductContentFallback(
   url: URL,
   originalStatus: number | null,
@@ -2633,6 +2811,13 @@ export async function fetchResolvedProductPage(url: URL): Promise<FetchedProduct
         });
         throw blockedStoreError(response.status, url.hostname);
       }
+      if (response.status === 404) {
+        throw new ProductLinkError("That link did not return a supported product page.", "unsupported_url", {
+          recoverable: false,
+          reason: "http_404",
+          status: response.status,
+        });
+      }
       throw new ProductLinkError("That product page could not be read. Paste another link or add from screenshot/photo.", "fetch_failed");
     }
     return {
@@ -2652,7 +2837,10 @@ export async function fetchResolvedProductPage(url: URL): Promise<FetchedProduct
         throw new ProductLinkError("Invalid product link.", "invalid_url");
       }
       if (error.code === "unsupported_format") {
-        throw new ProductLinkError("That link did not return a product page.", "fetch_failed");
+        throw new ProductLinkError("That link did not return a supported product page.", "unsupported_url", {
+          recoverable: false,
+          reason: "unsupported_content_type",
+        });
       }
     }
     throw new ProductLinkError("Could not fetch that product link. Paste another link or add from screenshot/photo.", "fetch_failed");
@@ -2681,9 +2869,12 @@ function applyAdapter(
   };
 }
 
-export async function extractProductFromUrl(rawUrl: string): Promise<ProductExtraction> {
+async function extractProductFromUrlInternal(rawUrl: string): Promise<ProductExtraction> {
   const validatedUrl = await validateProductUrl(rawUrl);
-  const url = normalizeProductUrl(validatedUrl).url;
+  const normalized = normalizeProductUrl(validatedUrl);
+  const url = normalized.url;
+  const zaraExtraction = await extractZaraProductFromApi(url);
+  if (zaraExtraction) return zaraExtraction;
   logger.info("[AURA_LINK_EXTRACT] fetching product page", {
     domain: url.hostname,
   });
@@ -2778,6 +2969,60 @@ export async function extractProductFromUrl(rawUrl: string): Promise<ProductExtr
     throw new ProductLinkError("No usable product images found.", "no_images");
   }
   return extraction;
+}
+
+export async function extractProductFromUrl(rawUrl: string): Promise<ProductExtraction> {
+  const startedAt = Date.now();
+  let normalized: ReturnType<typeof normalizeProductUrl> | null = null;
+  try {
+    normalized = normalizeProductUrl(new URL(rawUrl));
+  } catch {
+    // Validation below owns the user-facing error classification.
+  }
+  const detectedAdapterName = normalized?.retailerId && retailerAdapters.some(
+    (adapter) => adapter.id === normalized?.retailerId,
+  )
+    ? normalized.retailerId
+    : null;
+  logger.info("product_link_backend_extraction_started", {
+    normalizedDomain: normalized?.canonicalDomain ?? null,
+    retailer: normalized?.retailer ?? null,
+    adapterName: detectedAdapterName,
+    durationMs: 0,
+    responseContract: "normalized_internal_v2",
+  });
+  try {
+    const extraction = await extractProductFromUrlInternal(rawUrl);
+    const diagnostics = extraction.metadata.extractionDiagnostics;
+    logger.info("product_link_backend_extraction_succeeded", {
+      normalizedDomain: diagnostics?.normalizedDomain ?? extraction.metadata.domain,
+      retailer: extraction.metadata.retailer ?? normalized?.retailer ?? null,
+      adapterName: diagnostics?.adapterName ?? extraction.metadata.adapterName ?? detectedAdapterName,
+      extractionSource: diagnostics?.extractionSource ?? extraction.metadata.extractionSource ?? null,
+      extractionMode: diagnostics?.hadRetailerAdapter ? "dedicated" : "generic",
+      candidateImageCount: extraction.imageCandidateCount ?? extraction.imageUrls.length,
+      missingFields: diagnostics?.missingFields ?? [],
+      durationMs: Date.now() - startedAt,
+      responseContract: "normalized_internal_v2",
+    });
+    return extraction;
+  } catch (error) {
+    const details = error instanceof ProductLinkError ? error.details : null;
+    logger.error("product_link_backend_extraction_failed", {
+      normalizedDomain: normalized?.canonicalDomain ?? null,
+      retailer: normalized?.retailer ?? null,
+      adapterName: detectedAdapterName,
+      failureCode: error instanceof ProductLinkError ? error.code : "unexpected_internal_error",
+      httpStatus: typeof details?.status === "number" ? details.status : null,
+      fallbackPath:
+        error instanceof ProductLinkError && error.code === "blocked_store" && normalized?.retailerId === "hm"
+          ? "client_preview_eligible"
+          : "none",
+      durationMs: Date.now() - startedAt,
+      responseContract: "normalized_internal_v2",
+    });
+    throw error;
+  }
 }
 
 function sourceHashFor(urls: string[]): string {

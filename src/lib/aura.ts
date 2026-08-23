@@ -666,6 +666,17 @@ async function withClientLinkPreview(args: AskAuraArgs): Promise<AskAuraArgs> {
     }
     return args;
   }
+  if (!isHmProductUrl(sourceUrl)) {
+    if (DEBUG_AURA_CLIENT) {
+      console.log("[AURA_LINK_PREVIEW]", "client preview skipped; retailer selection stays backend-owned", {
+        host: new URL(sourceUrl).host,
+        clientIntent: args.clientIntent ?? null,
+      });
+    }
+    return args;
+  }
+  // AURA chat sends this only as a quarantined H&M fallback. The backend still
+  // extracts first and ignores H&M client metadata unless its own request is blocked.
   const linkPreview = await buildClientProductLinkPreview(sourceUrl);
   return linkPreview ? { ...args, linkPreview } : args;
 }

@@ -13,7 +13,7 @@ export { askAura } from "./askAura";
 export { askAuraStream } from "./askAuraStream";
 export { transcribeAuraAudio } from "./transcribeAuraAudio";
 export { importProductLink } from "./importProductLink";
-export { previewProductLink } from "./previewProductLink";
+export { extractProductFromUrl, previewProductLink } from "./previewProductLink";
 export { polishProductImage } from "./polishProductImage";
 export {
   extractOutfitItems,

@@ -53,13 +53,15 @@ const previewMetadataCache = new Map<string, {
 
 function codeForError(
   error: unknown,
-): "invalid-argument" | "failed-precondition" | "internal" {
+): "invalid-argument" | "failed-precondition" | "unavailable" | "internal" {
   if (!(error instanceof ProductLinkError)) return "internal";
   switch (error.code) {
     case "invalid_url":
     case "unsafe_url":
-    case "fetch_failed":
+    case "unsupported_url":
       return "invalid-argument";
+    case "fetch_failed":
+      return "unavailable";
     case "blocked_store":
     case "no_metadata":
     case "no_images":
@@ -105,12 +107,11 @@ function throwIfCandidateMissingEvidence(candidate: AuraCandidateItem, metadata:
 }
 
 function shouldSkipPreviewFallback(error: unknown, rawUrl: string, fallbackPreview: AuraLinkPreview | null | undefined) {
-  if (!(error instanceof ProductLinkError)) return false;
-  return (
-    error.code === "invalid_url" ||
-    error.code === "unsafe_url" ||
-    (error.code === "blocked_store" && !canUseHmBlockedStorePreviewFallback(rawUrl, fallbackPreview))
-  );
+  if (!(error instanceof ProductLinkError)) return true;
+  if (error.code === "blocked_store") {
+    return !canUseHmBlockedStorePreviewFallback(rawUrl, fallbackPreview);
+  }
+  return !["fetch_failed", "no_metadata", "no_images"].includes(error.code);
 }
 
 function messageForError(error: unknown) {
@@ -132,6 +133,17 @@ function detailsForError(
     productLinkCode: error.code,
     failureCode,
     warningCodes,
+    recoverable:
+      error.details?.recoverable ??
+      ["blocked_store", "fetch_failed", "no_metadata", "no_images"].includes(error.code),
+    failureKind:
+      error.code === "blocked_store"
+        ? "retailer_http_block"
+        : error.code === "fetch_failed"
+          ? "backend_network"
+          : error.code === "no_metadata" || error.code === "no_images"
+            ? "insufficient_metadata"
+            : error.code,
     ...(error.details ?? {}),
   };
 }
@@ -260,9 +272,7 @@ function previewResponseFromCandidate(params: {
   };
 }
 
-export const previewProductLink = onCall(
-  { secrets: ["OPENAI_API_KEY"] },
-  tracedHandler(async (request) => {
+const productLinkPreviewHandler = tracedHandler(async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "Please sign in first.");
@@ -290,6 +300,39 @@ export const previewProductLink = onCall(
     const client = new OpenAI({
       apiKey: requireOpenAiApiKey(),
     });
+
+    const fallbackMode = String(request.data?.fallbackMode ?? "");
+    if (fallbackMode) {
+      if (fallbackMode !== "hm_blocked_client_preview" || !hmClientFallback) {
+        throw new HttpsError("invalid-argument", "A safe H&M client preview is required for this fallback.");
+      }
+      const built = await buildUrlCandidatePreview({
+        client,
+        uid,
+        metadata: hmClientFallback,
+        preferNikeFootwearLeftProfile: true,
+      });
+      throwIfCandidateMissingEvidence(built.candidate, hmClientFallback);
+      logProductLinkEvent("product_link_preview_partial", buildProductLinkLogMetadata({
+        rawUrl: url,
+        metadata: hmClientFallback,
+        selectedImageReason: built.selectedImageReason,
+        candidateImageCount: built.rankedImageUrls.length || built.rawImageUrls.length,
+        primaryImageUrl: built.candidate.primaryImageUrl,
+        extraWarnings: ["CLIENT_PREVIEW_FALLBACK_USED", "FETCH_BLOCKED"],
+        durationMs: Date.now() - startedAt,
+        featureFlagEnabled,
+        resultStatus: "partial",
+        fallbackPath: "hm_blocked_client_preview",
+      }));
+      return previewResponseFromCandidate({
+        candidate: built.candidate,
+        metadata: hmClientFallback,
+        imageCandidateCount: built.rankedImageUrls.length || built.rawImageUrls.length,
+        imageExtractionSource: "fallback",
+        selectedImageReason: built.selectedImageReason,
+      });
+    }
 
     try {
       logger.info("[LINK_PREVIEW] extracting product link", {
@@ -334,6 +377,7 @@ export const previewProductLink = onCall(
             durationMs: Date.now() - startedAt,
             featureFlagEnabled,
             resultStatus: "partial",
+            fallbackPath: fallbackPreview === hmClientFallback ? "hm_client_preview" : "client_preview",
           }));
           return previewResponseFromCandidate({
             candidate: built.candidate,
@@ -430,6 +474,7 @@ export const previewProductLink = onCall(
           durationMs: Date.now() - startedAt,
           featureFlagEnabled,
           resultStatus: "partial",
+          fallbackPath: fallbackPreview === hmClientFallback ? "hm_client_preview" : "client_preview",
         }));
         return previewResponseFromCandidate({
           candidate: built.candidate,
@@ -451,6 +496,14 @@ export const previewProductLink = onCall(
         durationMs: Date.now() - startedAt,
         featureFlagEnabled,
         resultStatus: "failed",
+        httpStatus:
+          error instanceof ProductLinkError && typeof error.details?.status === "number"
+            ? error.details.status
+            : null,
+        fallbackPath:
+          error instanceof ProductLinkError && error.code === "blocked_store" && isHmProductUrl(url)
+            ? "client_preview_eligible"
+            : "none",
       }));
       logger.error("[LINK_PREVIEW] extraction failed", {
         uidHash: redactUid(uid),
@@ -461,5 +514,12 @@ export const previewProductLink = onCall(
       });
       throw new HttpsError(codeForError(error), message, detailsForError(error, failureCode, warningCodes));
     }
-  })
-);
+  });
+
+const productLinkPreviewOptions = { secrets: ["OPENAI_API_KEY"] };
+
+/** Primary callable used by current clients. */
+export const extractProductFromUrl = onCall(productLinkPreviewOptions, productLinkPreviewHandler);
+
+/** Compatibility alias retained for released TestFlight builds. */
+export const previewProductLink = onCall(productLinkPreviewOptions, productLinkPreviewHandler);
