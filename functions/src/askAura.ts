@@ -47,7 +47,7 @@ import type {
 const db = getFirestore();
 const AURA_BACKEND_VERSION = "candidate-preview-url-v9-zara-product-api";
 const DEBUG_AURA_SPARSE =
-  process.env.FUNCTIONS_EMULATOR === "true" || process.env.NODE_ENV !== "production";
+  process.env.FUNCTIONS_EMULATOR === "true" && process.env.AURA_DEBUG === "1";
 
 function styleCoreNoteFromClientContext(value: unknown) {
   const context = (value && typeof value === "object"
