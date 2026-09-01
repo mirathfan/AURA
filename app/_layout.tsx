@@ -4,6 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { signOut } from "firebase/auth";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
   Easing,
   runOnJS,
@@ -142,11 +143,16 @@ function ConfigurationErrorScreen() {
 }
 
 function AuthGate() {
-  const { user, loading, authCheckTimedOut, retryAuthCheck } = useAuth();
+  const {
+    user,
+    loading,
+    authCheckTimedOut,
+    retryAuthCheck,
+    profileRevision,
+    refreshProfile,
+  } = useAuth();
   const segments = useSegments();
   const [profileState, setProfileState] = useState<ProfileGateState>("loading");
-  const [profileRetryKey, setProfileRetryKey] = useState(0);
-  const routedRef = useRef<string | null>(null);
   const appOpenTrackedForUidRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -185,7 +191,7 @@ function AuthGate() {
     return () => {
       cancelled = true;
     };
-  }, [loading, profileRetryKey, user?.uid]);
+  }, [loading, profileRevision, user?.uid]);
 
   useEffect(() => {
     if (loading || profileState === "loading" || profileState === "error") return;
@@ -193,26 +199,17 @@ function AuthGate() {
     const inOnboardingGroup = segments[0] === "(onboarding)";
 
     if (!user && !inAuthGroup) {
-      if (routedRef.current !== "auth") {
-        routedRef.current = "auth";
-        router.replace("/(auth)/welcome");
-      }
+      router.replace("/(auth)/welcome");
       return;
     }
 
     if (user && profileState === "needs_onboarding" && !inOnboardingGroup) {
-      if (routedRef.current !== "onboarding") {
-        routedRef.current = "onboarding";
-        router.replace("/(onboarding)");
-      }
+      router.replace("/(onboarding)");
       return;
     }
 
     if (user && profileState === "onboarded" && (inAuthGroup || inOnboardingGroup)) {
-      if (routedRef.current !== "tabs") {
-        routedRef.current = "tabs";
-        router.replace("/(tabs)");
-      }
+      router.replace("/(tabs)");
     }
   }, [loading, profileState, segments, user]);
 
@@ -247,7 +244,7 @@ function AuthGate() {
     return <BrandedLoadingScreen />;
   }
   if (user && profileState === "error") {
-    return <ProfileLoadErrorScreen onRetry={() => setProfileRetryKey((value) => value + 1)} />;
+    return <ProfileLoadErrorScreen onRetry={refreshProfile} />;
   }
 
   return (
@@ -402,23 +399,25 @@ function RootLayout() {
   }, []);
 
   return (
-    <SafeAreaProvider>
-      <ThemeProvider value={navigationTheme}>
-        {firebaseReady ? (
-          <AuthProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <ThemeProvider value={navigationTheme}>
+          {firebaseReady ? (
+            <AuthProvider>
+              <View style={{ flex: 1, backgroundColor: palette.background }}>
+                <AuthGate />
+              </View>
+            </AuthProvider>
+          ) : (
             <View style={{ flex: 1, backgroundColor: palette.background }}>
-              <AuthGate />
+              <ConfigurationErrorScreen />
             </View>
-          </AuthProvider>
-        ) : (
-          <View style={{ flex: 1, backgroundColor: palette.background }}>
-            <ConfigurationErrorScreen />
-          </View>
-        )}
+          )}
 
-        <StatusBar style="light" />
-      </ThemeProvider>
-    </SafeAreaProvider>
+          <StatusBar style="light" />
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 

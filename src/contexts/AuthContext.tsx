@@ -1,5 +1,5 @@
 import { User, onAuthStateChanged } from "firebase/auth";
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { auth, hasFirebaseServices } from "../lib/firebase";
 
@@ -10,6 +10,8 @@ type AuthContextValue = {
   loading: boolean;
   authCheckTimedOut: boolean;
   retryAuthCheck: () => void;
+  profileRevision: number;
+  refreshProfile: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -19,6 +21,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [authCheckTimedOut, setAuthCheckTimedOut] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
+  const [profileRevision, setProfileRevision] = useState(0);
 
   useEffect(() => {
     let settled = false;
@@ -65,13 +68,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [retryKey]);
 
-  const retryAuthCheck = React.useCallback(() => {
+  const retryAuthCheck = useCallback(() => {
     setRetryKey((value) => value + 1);
   }, []);
 
+  const refreshProfile = useCallback(() => {
+    setProfileRevision((value) => value + 1);
+  }, []);
+
   const value = useMemo(
-    () => ({ user, loading, authCheckTimedOut, retryAuthCheck }),
-    [authCheckTimedOut, loading, retryAuthCheck, user],
+    () => ({ user, loading, authCheckTimedOut, retryAuthCheck, profileRevision, refreshProfile }),
+    [authCheckTimedOut, loading, profileRevision, refreshProfile, retryAuthCheck, user],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

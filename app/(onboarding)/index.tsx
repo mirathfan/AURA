@@ -1,5 +1,4 @@
 import Slider from "@react-native-community/slider";
-import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -33,6 +32,11 @@ import {
   saveUserAccountProfile,
   saveUserProfilePreferences,
 } from "@/src/lib/userProfile";
+import {
+  clearCachedOnboardingDraft,
+  getCachedOnboardingDraft,
+  setCachedOnboardingDraft,
+} from "@/src/lib/localCache";
 import { trackLaunchEvent } from "@/src/lib/analytics";
 import {
   FIT_OPTIONS,
@@ -53,6 +57,7 @@ import {
   toggleValue,
   unitsForPreference,
 } from "@/src/onboarding/onboardingFormat";
+import { restoreOnboardingDraft } from "@/src/onboarding/onboardingDraft";
 import type {
   UnitsPreference,
   UserProfilePreferences,
@@ -60,7 +65,7 @@ import type {
 } from "@/src/types/UserProfilePreferences";
 
 export default function OnboardingScreen() {
-  const { user } = useAuth();
+  const { user, refreshProfile } = useAuth();
   const { colors } = useAppTheme();
   const { width } = useWindowDimensions();
   const [loading, setLoading] = useState(true);
@@ -70,6 +75,8 @@ export default function OnboardingScreen() {
   const [stepIndex, setStepIndex] = useState(0);
   const [draft, setDraft] = useState<UserProfilePreferences>(EMPTY_USER_PROFILE_PREFERENCES);
   const autoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hydratedUidRef = useRef<string | null>(null);
   const saveInFlightRef = useRef(false);
 
   const detected = useMemo(() => getLocaleParts(), []);
@@ -87,45 +94,65 @@ export default function OnboardingScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    hydratedUidRef.current = null;
     if (!user?.uid) {
-      router.replace("/(auth)/welcome");
+      setStepIndex(0);
+      setDraft(EMPTY_USER_PROFILE_PREFERENCES);
+      setLoading(false);
       return;
     }
 
-    void loadUserProfilePreferences(user.uid)
-      .then((profile) => {
+    setLoading(true);
+    setStepIndex(0);
+    const uid = user.uid;
+
+    void (async () => {
+      try {
+        const profile = await loadUserProfilePreferences(uid);
+        const cached = profile.onboardingCompleted
+          ? null
+          : await getCachedOnboardingDraft(uid);
+        if (profile.onboardingCompleted) {
+          await clearCachedOnboardingDraft(uid);
+        }
         if (cancelled) return;
-        const unitsPreference = profile.onboardingCompleted
-          ? profile.unitsPreference
-          : detected.unitsPreference;
+
+        const restored = restoreOnboardingDraft(profile, cached?.data ?? null, STEPS.length);
+        const source = restored?.profile ?? profile;
+        const unitsPreference = restored
+          ? source.unitsPreference
+          : source.onboardingCompleted
+            ? source.unitsPreference
+            : detected.unitsPreference;
         const heightDefault = unitsPreference === "imperial" ? 67 : 170;
         setDraft({
           ...EMPTY_USER_PROFILE_PREFERENCES,
-          ...profile,
-          region: profile.region ?? detected.region,
+          ...source,
+          region: source.region ?? detected.region,
           unitsPreference,
           units: unitsForPreference(unitsPreference),
           firstName:
-            profile.firstName ??
+            source.firstName ??
             user.displayName?.split(" ")[0] ??
             user.email?.split("@")[0] ??
             "",
           body: {
-            ...profile.body,
-            height: profile.body.height ?? profile.height.value ?? heightDefault,
+            ...source.body,
+            height: source.body.height ?? source.height.value ?? heightDefault,
           },
           height: {
-            value: profile.height.value ?? profile.body.height ?? heightDefault,
+            value: source.height.value ?? source.body.height ?? heightDefault,
             unit: unitsPreference === "imperial" ? "ft_in" : "cm",
           },
           defaultSizes: {
-            ...profile.defaultSizes,
-            shoes: profile.defaultSizes.shoes ?? "EU 42",
+            ...source.defaultSizes,
+            shoes: source.defaultSizes.shoes ?? "EU 42",
           },
-          preferredFit: profile.preferredFit ?? "regular",
+          preferredFit: source.preferredFit ?? "regular",
         });
-      })
-      .catch(() => {
+        setStepIndex(restored?.stepIndex ?? 0);
+        hydratedUidRef.current = uid;
+      } catch {
         if (cancelled) return;
         const units = unitsForPreference(detected.unitsPreference);
         const heightDefault = detected.unitsPreference === "imperial" ? 67 : 170;
@@ -150,16 +177,41 @@ export default function OnboardingScreen() {
           },
           preferredFit: "regular",
         });
-      })
-      .finally(() => {
+        hydratedUidRef.current = uid;
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
       if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
+      if (draftPersistTimer.current) clearTimeout(draftPersistTimer.current);
     };
   }, [detected.region, detected.unitsPreference, user?.displayName, user?.email, user?.uid]);
+
+  useEffect(() => {
+    if (
+      loading ||
+      !user?.uid ||
+      hydratedUidRef.current !== user.uid ||
+      draft.onboardingCompleted
+    ) return;
+    if (draftPersistTimer.current) clearTimeout(draftPersistTimer.current);
+
+    const uid = user.uid;
+    draftPersistTimer.current = setTimeout(() => {
+      draftPersistTimer.current = null;
+      void setCachedOnboardingDraft(uid, { stepIndex, profile: draft });
+    }, 500);
+
+    return () => {
+      if (draftPersistTimer.current) {
+        clearTimeout(draftPersistTimer.current);
+        draftPersistTimer.current = null;
+      }
+    };
+  }, [draft, loading, stepIndex, user?.uid]);
 
   const units = useMemo(
     () => unitsForPreference(draft.unitsPreference),
@@ -314,6 +366,11 @@ export default function OnboardingScreen() {
           null,
       });
       await saveUserProfilePreferences(user.uid, profileToSave);
+      if (draftPersistTimer.current) {
+        clearTimeout(draftPersistTimer.current);
+        draftPersistTimer.current = null;
+      }
+      await clearCachedOnboardingDraft(user.uid);
       void trackLaunchEvent({
         userId: user.uid,
         eventName: "onboarding_completed",
@@ -324,7 +381,7 @@ export default function OnboardingScreen() {
           unitsPreference: draft.unitsPreference,
         },
       });
-      router.replace("/(tabs)");
+      refreshProfile();
     } catch (error) {
       const message = messageForOnboardingSaveError(error);
       setSaveError(message);

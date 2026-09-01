@@ -63,7 +63,6 @@ export default function RegisterScreen() {
           provider: "password",
         },
       });
-      router.replace("/(onboarding)");
     } catch (error: any) {
       Alert.alert("Create account failed", getAuthErrorMessage(error));
     } finally {

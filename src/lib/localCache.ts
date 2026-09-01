@@ -27,7 +27,17 @@ export const LOCAL_CACHE_MAX_AGE_MS = {
   chatList: 7 * 24 * 60 * 60 * 1000,
   recentMessages: 7 * 24 * 60 * 60 * 1000,
   profilePreferences: 7 * 24 * 60 * 60 * 1000,
+  onboardingDraft: 30 * 24 * 60 * 60 * 1000,
 } as const;
+
+export const ONBOARDING_DRAFT_SCHEMA_VERSION = 1;
+
+export type OnboardingDraftCache = {
+  schemaVersion: typeof ONBOARDING_DRAFT_SCHEMA_VERSION;
+  uid: string;
+  stepIndex: number;
+  profile: UserProfilePreferences;
+};
 
 type CacheEnvelope<T> = {
   version: number;
@@ -476,6 +486,56 @@ export function getCachedProfilePreferences(uid: string) {
 
 export function setCachedProfilePreferences(uid: string, prefs: UserProfilePreferences) {
   return writeCache(uid, "profile-preferences", sanitizeDeep(prefs) as UserProfilePreferences);
+}
+
+function parseOnboardingDraft(
+  value: unknown,
+  expectedUid: string,
+): OnboardingDraftCache | null {
+  if (!isObject(value)) return null;
+  if (value.schemaVersion !== ONBOARDING_DRAFT_SCHEMA_VERSION) return null;
+  if (value.uid !== expectedUid) return null;
+  if (!Number.isInteger(value.stepIndex) || Number(value.stepIndex) < 0) return null;
+  if (!isObject(value.profile)) return null;
+
+  return {
+    schemaVersion: ONBOARDING_DRAFT_SCHEMA_VERSION,
+    uid: expectedUid,
+    stepIndex: Number(value.stepIndex),
+    profile: value.profile as UserProfilePreferences,
+  };
+}
+
+export async function getCachedOnboardingDraft(uid: string) {
+  const cached = await readCache<unknown>(
+    uid,
+    "onboarding-draft",
+    LOCAL_CACHE_MAX_AGE_MS.onboardingDraft,
+  );
+  if (!cached || cached.stale) return null;
+  const draft = parseOnboardingDraft(cached.data, uid);
+  if (!draft) return null;
+  return { ...cached, data: draft };
+}
+
+export function setCachedOnboardingDraft(
+  uid: string,
+  draft: Omit<OnboardingDraftCache, "schemaVersion" | "uid">,
+) {
+  return writeCache(uid, "onboarding-draft", {
+    schemaVersion: ONBOARDING_DRAFT_SCHEMA_VERSION,
+    uid,
+    stepIndex: draft.stepIndex,
+    profile: sanitizeDeep(draft.profile) as UserProfilePreferences,
+  } satisfies OnboardingDraftCache);
+}
+
+export async function clearCachedOnboardingDraft(uid: string) {
+  try {
+    await Storage.removeItem(keyFor(uid, "onboarding-draft"));
+  } catch {
+    // ignore
+  }
 }
 
 export async function clearLocalCacheForUser(uid: string) {
