@@ -17,7 +17,8 @@ Current decision: **NO-GO for inviting external testers**. The code candidate is
 
 ## Open Release Gates
 
-- [ ] Build 9 is successfully created, uploaded, and processed in TestFlight.
+- [ ] Deploy backend hardening commit `7517314`; the current Firebase identity is blocked by project HTTP 403.
+- [ ] Confirm uploaded build 9 finishes Apple processing and becomes available in TestFlight.
 - [ ] A physical-iPhone TestFlight install passes fresh signup, onboarding, Closet, AURA, planning, logout/relogin, and reliability testing.
 - [ ] Disposable-account deletion is verified end-to-end against Firebase Auth and associated stored data.
 - [ ] The synthetic/build-9 event is inspected in Sentry for stack readability and privacy; source maps and alert delivery are verified.
@@ -35,4 +36,4 @@ Current decision: **NO-GO for inviting external testers**. The code candidate is
 - [ ] GO
 - [x] NO-GO
 
-Decision notes: Do not invite external testers until every open release gate above is evidenced against build 9.
+Decision notes: Build 9 (`f99e432e-1d39-464b-b73d-7aef91cc212b`) was successfully built and submitted. Do not invite external testers until every open release gate above is evidenced against that artifact.

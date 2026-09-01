@@ -62,7 +62,7 @@ Emulator diagnostics that bypass the central logger are strictly gated to the Fi
 
 Before: 23 findings — 2 critical, 7 high, 13 moderate, 1 low.
 
-After safe non-major remediation: 12 findings — 0 critical, 2 high, 10 moderate, 0 low.
+After safe non-major remediation (clean `npm ci` audit on 2026-08-31): 13 findings — 0 critical, 2 high, 11 moderate, 0 low.
 
 Resolved critical/high packages include `@grpc/grpc-js`, `adm-zip`, `form-data`, `onnxruntime-node`, `tar`, `undici`, and `websocket-driver`. Firebase Admin/Functions and Expo patch releases were upgraded without force/major dependency churn.
 
@@ -95,9 +95,19 @@ App Check remains unenforced. The current mobile clients do not include a valid 
 
 ## External Account And Device Gates
 
+- Firebase Functions deployment: blocked before update by HTTP 403 (`resourcemanager.projects.get`) for `aura-app-25fc9`; commit `7517314` must be deployed by an authorized project identity before testers are invited.
 - GCP/Firebase budget alert state and recipients: manual required; the available Google account lacks project inspection permission.
 - Sentry alert destination/source maps: manual required; no project session/credentials were available.
 - App Store Connect metadata/privacy/export compliance: manual required; no signed-in session was available.
 - Physical-iPhone TestFlight QA and disposable-account deletion: required after build 9 is processed.
+
+## Build 9 And Submission
+
+- EAS build: `f99e432e-1d39-464b-b73d-7aef91cc212b`
+- Version/build: `1.0.0` (`9`)
+- EAS status: `FINISHED` at 2026-09-01 00:50:01 UTC
+- App Store Connect submission: `0f1c110a-ce5b-4b00-8786-8f7387738b75`
+- Upload status: accepted by App Store Connect; Apple processing pending at last verification.
+- Build page: `https://expo.dev/accounts/mirathfan/projects/aura-ai-personal-stylist/builds/f99e432e-1d39-464b-b73d-7aef91cc212b`
 
 Current verdict: **NO-GO for external tester invitations until the account and physical-device gates in `PUBLIC_BETA_GO_NO_GO.md` are complete.**
