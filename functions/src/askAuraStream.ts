@@ -1752,9 +1752,9 @@ export const askAuraStream = onRequest(
                     additionalProperties: false,
                     properties: {
                       label: { type: "string" },
-                      searchQuery: { type: "string" },
+                      searchQuery: { type: ["string", "null"] },
                     },
-                    required: ["label"],
+                    required: ["label", "searchQuery"],
                   },
                 },
                 chips: { type: "array", items: { type: "string" } },
@@ -1769,8 +1769,8 @@ export const askAuraStream = onRequest(
                         vibe: { type: "string" },
                         shortExplanation: { type: "string" },
                         stylingNote: { type: "string" },
-                        personalizationLabel: { type: "string" },
-                        personalizationNote: { type: "string" },
+                        personalizationLabel: { type: ["string", "null"] },
+                        personalizationNote: { type: ["string", "null"] },
                         pieces: {
                           type: "array",
                           items: {
@@ -1797,7 +1797,7 @@ export const askAuraStream = onRequest(
                           },
                         },
                       },
-                      required: ["lookTitle", "vibe", "shortExplanation", "stylingNote", "pieces", "fromCloset", "addToComplete", "alternates", "actions"],
+                      required: ["lookTitle", "vibe", "shortExplanation", "stylingNote", "personalizationLabel", "personalizationNote", "pieces", "fromCloset", "addToComplete", "alternates", "actions"],
                     },
                   ],
                 },
@@ -1811,8 +1811,8 @@ export const askAuraStream = onRequest(
                       vibe: { type: "string" },
                       shortExplanation: { type: "string" },
                       stylingNote: { type: "string" },
-                      personalizationLabel: { type: "string" },
-                      personalizationNote: { type: "string" },
+                      personalizationLabel: { type: ["string", "null"] },
+                      personalizationNote: { type: ["string", "null"] },
                       pieces: {
                         type: "array",
                         items: {
@@ -1839,7 +1839,7 @@ export const askAuraStream = onRequest(
                         },
                       },
                     },
-                    required: ["lookTitle", "vibe", "shortExplanation", "stylingNote", "pieces", "fromCloset", "addToComplete", "alternates", "actions"],
+                    required: ["lookTitle", "vibe", "shortExplanation", "stylingNote", "personalizationLabel", "personalizationNote", "pieces", "fromCloset", "addToComplete", "alternates", "actions"],
                   },
                 },
               },

@@ -1267,9 +1267,9 @@ export const askAura = onCall(
                     additionalProperties: false,
                     properties: {
                       label: { type: "string" },
-                      searchQuery: { type: "string" },
+                      searchQuery: { type: ["string", "null"] },
                     },
-                    required: ["label"],
+                    required: ["label", "searchQuery"],
                   },
                 },
                 chips: {
@@ -1288,8 +1288,8 @@ export const askAura = onCall(
                         vibe: { type: "string" },
                         shortExplanation: { type: "string" },
                         stylingNote: { type: "string" },
-                        personalizationLabel: { type: "string" },
-                        personalizationNote: { type: "string" },
+                        personalizationLabel: { type: ["string", "null"] },
+                        personalizationNote: { type: ["string", "null"] },
                         pieces: {
                           type: "array",
                           items: {
@@ -1316,7 +1316,7 @@ export const askAura = onCall(
                           },
                         },
                       },
-                      required: ["lookTitle", "vibe", "shortExplanation", "stylingNote", "pieces", "fromCloset", "addToComplete", "alternates", "actions"],
+                      required: ["lookTitle", "vibe", "shortExplanation", "stylingNote", "personalizationLabel", "personalizationNote", "pieces", "fromCloset", "addToComplete", "alternates", "actions"],
                     },
                   ],
                 },
@@ -1330,8 +1330,8 @@ export const askAura = onCall(
                       vibe: { type: "string" },
                       shortExplanation: { type: "string" },
                       stylingNote: { type: "string" },
-                      personalizationLabel: { type: "string" },
-                      personalizationNote: { type: "string" },
+                      personalizationLabel: { type: ["string", "null"] },
+                      personalizationNote: { type: ["string", "null"] },
                       pieces: {
                         type: "array",
                         items: {
@@ -1358,7 +1358,7 @@ export const askAura = onCall(
                         },
                       },
                     },
-                    required: ["lookTitle", "vibe", "shortExplanation", "stylingNote", "pieces", "fromCloset", "addToComplete", "alternates", "actions"],
+                    required: ["lookTitle", "vibe", "shortExplanation", "stylingNote", "personalizationLabel", "personalizationNote", "pieces", "fromCloset", "addToComplete", "alternates", "actions"],
                   },
                 },
               },
