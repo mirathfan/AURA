@@ -1,7 +1,7 @@
 import { FieldPath, getFirestore, type DocumentReference } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "../../shared/logger";
-import { redactUid } from "../../shared/rateLimit";
+import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
 import {
   DRAFT_CLEANUP_CONFIRM,
   MAX_DRAFT_CLEANUP_RETURNED_ITEMS,
@@ -32,6 +32,7 @@ const DEFAULT_BACKFILL_LIMIT = 50;
 const MAX_BACKFILL_LIMIT = 100;
 const MAX_BACKFILL_DEBUG_ITEMS = 50;
 const BACKFILL_ALL_BATCH_SIZE = 100;
+const MAX_BACKFILL_ALL_ITEMS = 300;
 const FIRESTORE_DELETE_BATCH_LIMIT = 400;
 
 type CleanupDocRecord = DraftCleanupRecord & {
@@ -248,6 +249,7 @@ export const reindexClosetItem = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    await assertFunctionRateLimit(uid, "wardrobeIndexing", RATE_LIMITS.wardrobeIndexing);
     const itemId = requireItemId(request.data?.itemId);
     const force = request.data?.force === true;
     const ref = getFirestore().collection("users").doc(uid).collection("items").doc(itemId);
@@ -279,6 +281,7 @@ export const backfillWardrobeIntelligence = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    await assertFunctionRateLimit(uid, "wardrobeBackfill", RATE_LIMITS.wardrobeBackfill);
     const limit = backfillLimit(request.data?.limit);
     const force = request.data?.force === true;
     const dryRun = request.data?.dryRun === true;
@@ -293,6 +296,7 @@ export const backfillWardrobeIntelligenceAll = onCall(
     const uid = requireAuthUid(request.auth?.uid);
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
+    await assertFunctionRateLimit(uid, "wardrobeBackfill", RATE_LIMITS.wardrobeBackfill);
     const force = request.data?.force === true;
     const dryRun = request.data?.dryRun === true;
 
@@ -305,9 +309,11 @@ export const backfillWardrobeIntelligenceAll = onCall(
 
     try {
       do {
+        const remaining = MAX_BACKFILL_ALL_ITEMS - totalProcessed;
+        if (remaining <= 0) break;
         const batch = await processBackfillBatch({
           uid,
-          limit: BACKFILL_ALL_BATCH_SIZE,
+          limit: Math.min(BACKFILL_ALL_BATCH_SIZE, remaining),
           force,
           dryRun,
           cursor,
@@ -353,6 +359,8 @@ export const backfillWardrobeIntelligenceAll = onCall(
       totalSkipped,
       totalFailed,
       batchesExecuted,
+      capped: totalProcessed >= MAX_BACKFILL_ALL_ITEMS && cursor !== null,
+      maxItemsPerRun: MAX_BACKFILL_ALL_ITEMS,
       dryRun,
     };
   }),

@@ -92,11 +92,11 @@ function normalizeRoles(value: unknown): OutfitRole[] {
 
 export function normalizeOutfitGenerationInput(value: unknown): NormalizedOutfitGenerationInput {
   const data = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  const query = cleanText(data.query);
+  const query = cleanText(data.query).slice(0, 2000);
   if (!query) throw new HttpsError("invalid-argument", "A non-empty outfit query is required.");
   const count = Number(data.count ?? DEFAULT_OUTFIT_COUNT);
-  const occasion = cleanText(data.occasion);
-  const weather = cleanText(data.weather);
+  const occasion = cleanText(data.occasion).slice(0, 200);
+  const weather = cleanText(data.weather).slice(0, 200);
   return {
     query,
     count: Math.max(1, Math.min(MAX_OUTFIT_COUNT, Number.isFinite(count) ? Math.floor(count) : DEFAULT_OUTFIT_COUNT)),

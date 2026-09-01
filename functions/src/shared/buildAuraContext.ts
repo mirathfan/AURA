@@ -279,7 +279,7 @@ export function buildAuraContext({
   userProfile,
 }: AuraContextArgs) {
   const DEBUG_AURA_SPARSE =
-    process.env.FUNCTIONS_EMULATOR === "true" || process.env.NODE_ENV !== "production";
+    process.env.FUNCTIONS_EMULATOR === "true" && process.env.AURA_DEBUG === "1";
   const DEBUG_AURA_CONTEXT =
     process.env.DEBUG_AURA_CONTEXT === "1" || process.env.DEBUG_AURA_CONTEXT === "true";
   const excluded = {

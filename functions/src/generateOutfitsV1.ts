@@ -281,7 +281,7 @@ export const generateOutfitsV1 = onCall(
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
 
-    const intentText = String(request.data?.intentText ?? "").trim();
+    const intentText = String(request.data?.intentText ?? "").trim().slice(0, 2000);
     if (!intentText) {
       throw new HttpsError("invalid-argument", "intentText is required");
     }

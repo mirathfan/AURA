@@ -92,7 +92,7 @@ export const importProductLink = onCall(
     }
     setLogContext({ uidHash: redactUid(uid) });
 
-    const url = String(request.data?.url ?? "").trim();
+    const url = String(request.data?.url ?? "").trim().slice(0, 2048);
     if (!url) {
       throw new HttpsError("invalid-argument", "A product link is required.");
     }

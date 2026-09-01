@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { setLogContext, tracedHandler } from "../../shared/logger";
-import { redactUid } from "../../shared/rateLimit";
+import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
 import {
   buildOutfitWeatherWarnings,
   dateKeyToDate,
@@ -766,6 +766,7 @@ export const saveAuraAgentOutfit = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handleSaveAuraAgentOutfit(uid, request.data);
   }),
 );
@@ -775,6 +776,7 @@ export const logAuraAgentOutfitWear = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handleLogAuraAgentOutfitWear(uid, request.data);
   }),
 );
@@ -784,6 +786,7 @@ export const planAuraAgentOutfit = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handlePlanAuraAgentOutfit(uid, request.data);
   }),
 );
@@ -793,6 +796,7 @@ export const dislikeAuraAgentOutfit = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handleDislikeAuraAgentOutfit(uid, request.data);
   }),
 );

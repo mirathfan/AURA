@@ -97,13 +97,13 @@ function normalizeLimit(value: unknown): number {
 
 export function normalizeWardrobeRetrievalInput(value: unknown): NormalizedWardrobeRetrievalInput {
   const data = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  const query = cleanText(data.query);
+  const query = cleanText(data.query).slice(0, 2000);
   if (!query) {
     throw new HttpsError("invalid-argument", "A non-empty wardrobe retrieval query is required.");
   }
 
-  const occasion = cleanText(data.occasion);
-  const weather = cleanText(data.weather);
+  const occasion = cleanText(data.occasion).slice(0, 200);
+  const weather = cleanText(data.weather).slice(0, 200);
   return {
     query,
     limit: normalizeLimit(data.limit),

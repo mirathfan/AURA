@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
 import { logger as firebaseLogger } from "firebase-functions/v2";
+import { sanitizeLogArgs } from "./logSanitizer";
 
 type LogContext = {
   traceId?: string;
@@ -27,7 +28,7 @@ function withContext(args: unknown[]) {
 }
 
 function callWithContext(method: (...args: any[]) => void, args: unknown[]) {
-  method(...withContext(args));
+  method(...sanitizeLogArgs(withContext(args)));
 }
 
 export const logger = {

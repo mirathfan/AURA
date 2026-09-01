@@ -25,7 +25,7 @@ export function dayLimit(max: number): RateLimitRule {
 }
 
 export const RATE_LIMITS = {
-  auraChat: [minuteLimit(10), dayLimit(80)],
+  auraChat: [minuteLimit(6), dayLimit(40)],
   productLink: [minuteLimit(5), dayLimit(30)],
   imageIngestion: [minuteLimit(3), dayLimit(25)],
   productPolish: [minuteLimit(3), dayLimit(20)],
@@ -36,7 +36,11 @@ export const RATE_LIMITS = {
   parseOutfitIntent: [minuteLimit(20), dayLimit(200)],
   productSearch: [minuteLimit(3), dayLimit(20)],
   outfitChat: [minuteLimit(10), dayLimit(100)],
-  outfitGeneration: [minuteLimit(10), dayLimit(100)],
+  outfitGeneration: [minuteLimit(4), dayLimit(30)],
+  wardrobeRetrieval: [minuteLimit(8), dayLimit(60)],
+  styleMemoryAi: [minuteLimit(8), dayLimit(60)],
+  wardrobeIndexing: [minuteLimit(10), dayLimit(50)],
+  wardrobeBackfill: [minuteLimit(1), dayLimit(1)],
   voiceTranscription: [minuteLimit(6), dayLimit(60)],
   accountDelete: [dayLimit(3)],
 } as const;

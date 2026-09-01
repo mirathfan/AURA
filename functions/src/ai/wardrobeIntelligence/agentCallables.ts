@@ -1,6 +1,6 @@
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "../../shared/logger";
-import { redactUid } from "../../shared/rateLimit";
+import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
 import { runAuraStylingAgentGraph } from "./agentGraph";
 import { safeRecordAuraMetricEvent } from "./metrics";
 import type { AuraAgentDeps } from "./agentNodes";
@@ -96,7 +96,7 @@ function normalizeRequest(data: unknown): AuraStylingAgentRequest {
     ? record.previousOutfit as Record<string, unknown>
     : undefined;
   return {
-    query: cleanText(record.query),
+    query: cleanText(record.query).slice(0, 2000),
     mode: cleanText(record.mode) as AuraStylingAgentRequest["mode"],
     count: Number.isFinite(Number(record.count)) ? Number(record.count) : undefined,
     occasion: cleanText(record.occasion) || undefined,
@@ -148,6 +148,7 @@ export const runAuraStylingAgent = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    await assertFunctionRateLimit(uid, "auraChat", RATE_LIMITS.auraChat);
     logger.info(`${LOG_PREFIX} started`, { uidHash: redactUid(uid) });
     const normalized = normalizeRequest(request.data);
     const startedAt = Date.now();

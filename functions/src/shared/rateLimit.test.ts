@@ -1,10 +1,22 @@
 import { HttpsError } from "firebase-functions/v2/https";
 import {
+  RATE_LIMITS,
   assertFunctionRateLimit,
   dayLimit,
   minuteLimit,
   redactUid,
 } from "./rateLimit";
+
+describe("RATE_LIMITS", () => {
+  it("uses the documented conservative beta limits", () => {
+    expect(RATE_LIMITS.auraChat.map((rule) => rule.max)).toEqual([6, 40]);
+    expect(RATE_LIMITS.outfitGeneration.map((rule) => rule.max)).toEqual([4, 30]);
+    expect(RATE_LIMITS.wardrobeRetrieval.map((rule) => rule.max)).toEqual([8, 60]);
+    expect(RATE_LIMITS.styleMemoryAi.map((rule) => rule.max)).toEqual([8, 60]);
+    expect(RATE_LIMITS.wardrobeIndexing.map((rule) => rule.max)).toEqual([10, 50]);
+    expect(RATE_LIMITS.wardrobeBackfill.map((rule) => rule.max)).toEqual([1, 1]);
+  });
+});
 
 type DocRef = {
   path: string;

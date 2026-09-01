@@ -204,7 +204,7 @@ async function readImageInput(uid: string, data: Record<string, unknown>, traceI
       durationMs: durationMs(startedAt),
       data: {
         inputSource: "storage",
-        storagePath,
+        storagePathType: "user_storage",
         contentType,
         sizeBytes: Number.isFinite(sizeBytes) ? sizeBytes : null,
       },
@@ -214,7 +214,7 @@ async function readImageInput(uid: string, data: Record<string, unknown>, traceI
       traceId,
       step: "source_image_fetched",
       status: "start",
-      data: { inputSource: "storage", storagePath },
+      data: { inputSource: "storage", storagePathType: "user_storage" },
     });
     const [bytes] = await file.download();
     if (bytes.length > MAX_IMAGE_BYTES) {
@@ -466,7 +466,7 @@ async function uploadRefinedImage(uid: string, bytes: Buffer, traceId: string) {
     traceId,
     step: "refined_image_uploaded",
     status: "start",
-    data: { storagePath: path, byteLength: bytes.length },
+    data: { storagePathType: "product_polish_refined", byteLength: bytes.length },
   });
   try {
     await bucket.file(path).save(bytes, {
@@ -487,7 +487,7 @@ async function uploadRefinedImage(uid: string, bytes: Buffer, traceId: string) {
       step: "refined_image_uploaded",
       status: "success",
       durationMs: durationMs(startedAt),
-      data: { storagePath: path, hasRefinedImageUrl: !!result.refinedImageUrl },
+      data: { storagePathType: "product_polish_refined", hasRefinedImageUrl: !!result.refinedImageUrl },
     });
     return result;
   } catch (error) {

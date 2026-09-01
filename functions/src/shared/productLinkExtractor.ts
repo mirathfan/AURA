@@ -125,10 +125,11 @@ const USER_AGENT =
 export const BLOCKED_STORE_MESSAGE = "This store blocked automatic reading. Paste another link or add from screenshot/photo.";
 const BLOCKED_STORE_SUBTEXT = "You can try again, paste another link, or add the item from a screenshot.";
 const DEBUG_PRODUCT_LINK_LOGS =
-  process.env.DEBUG_AURA_CANDIDATE_LOGS === "1" ||
-  process.env.DEBUG_AURA_CANDIDATE_LOGS === "true" ||
-  (process.env.FUNCTIONS_EMULATOR === "true" &&
-    (process.env.AURA_DEBUG === "1" || process.env.AURA_DEBUG === "true"));
+  process.env.NODE_ENV !== "production" &&
+  (process.env.DEBUG_AURA_CANDIDATE_LOGS === "1" ||
+    process.env.DEBUG_AURA_CANDIDATE_LOGS === "true" ||
+    (process.env.FUNCTIONS_EMULATOR === "true" &&
+      (process.env.AURA_DEBUG === "1" || process.env.AURA_DEBUG === "true")));
 
 export type ProductImageExtractionSource =
   | "retailer_adapter"

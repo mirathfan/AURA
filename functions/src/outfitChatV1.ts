@@ -428,8 +428,8 @@ export const outfitChatV1 = onCall(
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
 
-    const message = String(request.data?.message ?? "").trim();
-    const incomingThreadId = String(request.data?.threadId ?? "").trim() || null;
+    const message = String(request.data?.message ?? "").trim().slice(0, 2000);
+    const incomingThreadId = String(request.data?.threadId ?? "").trim().slice(0, 180) || null;
     if (!message) {
       throw new HttpsError("invalid-argument", "message is required");
     }

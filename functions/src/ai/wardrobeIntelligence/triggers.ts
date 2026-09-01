@@ -1,6 +1,6 @@
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { logger, setLogContext, tracedHandler } from "../../shared/logger";
-import { redactUid } from "../../shared/rateLimit";
+import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
 import { CLOSET_ITEM_DOCUMENT_PATH } from "./config";
 import { indexClosetItemIntelligence } from "./indexClosetItem";
 import {
@@ -35,6 +35,7 @@ export const onClosetItemWriteIndexIntelligence = onDocumentWritten(
     }
 
     try {
+      await assertFunctionRateLimit(uid, "wardrobeIndexing", RATE_LIMITS.wardrobeIndexing);
       const result = await indexClosetItemIntelligence({
         itemId,
         item: { id: itemId, ...after },

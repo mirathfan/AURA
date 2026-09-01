@@ -133,8 +133,8 @@ async function parseSwipeIntent(
   }
 }
 
-function cleanString(value: unknown) {
-  return String(value ?? "").trim();
+function cleanString(value: unknown, maxLength = 2000) {
+  return String(value ?? "").trim().slice(0, maxLength);
 }
 
 function itemLabel(item?: WardrobeItem | null) {

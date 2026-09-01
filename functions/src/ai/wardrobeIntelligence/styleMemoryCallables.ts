@@ -1,6 +1,6 @@
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { setLogContext, tracedHandler } from "../../shared/logger";
-import { redactUid } from "../../shared/rateLimit";
+import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
 import { safeRecordAuraMetricEvent } from "./metrics";
 import {
   defaultStyleProfile,
@@ -66,9 +66,9 @@ export async function handleRetrieveStyleMemoryContext(
   const userId = requireAuthUid(uid);
   const input = data && typeof data === "object" ? data as Record<string, unknown> : {};
   const response = await retrieveStyleMemoryContextForUser(userId, {
-    query: String(input.query ?? ""),
-    occasion: typeof input.occasion === "string" ? input.occasion : undefined,
-    formality: typeof input.formality === "string" ? input.formality : undefined,
+    query: String(input.query ?? "").slice(0, 2000),
+    occasion: typeof input.occasion === "string" ? input.occasion.slice(0, 200) : undefined,
+    formality: typeof input.formality === "string" ? input.formality.slice(0, 80) : undefined,
     limit: Number(input.limit),
     includeDiagnostics: input.includeDiagnostics === true,
     respectInputOccasion: input.respectInputOccasion === true,
@@ -146,6 +146,7 @@ export const recordOutfitFeedback = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handleRecordOutfitFeedback(uid, request.data);
   }),
 );
@@ -155,6 +156,7 @@ export const retrieveStyleMemoryContext = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handleRetrieveStyleMemoryContext(uid, request.data);
   }),
 );

@@ -13,8 +13,9 @@ import {
 import { logger } from "./logger";
 
 const DEBUG_AURA_CANDIDATE_LOGS =
-  process.env.DEBUG_AURA_CANDIDATE_LOGS === "1" ||
-  process.env.DEBUG_AURA_CANDIDATE_LOGS === "true";
+  process.env.NODE_ENV !== "production" &&
+  (process.env.DEBUG_AURA_CANDIDATE_LOGS === "1" ||
+    process.env.DEBUG_AURA_CANDIDATE_LOGS === "true");
 const PRODUCT_IMAGE_VISION_RANK_LIMIT = 8;
 const PRODUCT_IMAGE_REACHABILITY_LIMIT = 6;
 const PRODUCT_IMAGE_PROBE_TIMEOUT_MS = 3_500;
@@ -118,13 +119,13 @@ export async function filterReachableProductImageUrls(
 
 function debugAuraCandidateInfo(...args: Parameters<typeof console.info>) {
   if (DEBUG_AURA_CANDIDATE_LOGS) {
-    console.info(...args);
+    logger.info(...args);
   }
 }
 
 function debugAuraCandidateWarn(...args: Parameters<typeof console.warn>) {
   if (DEBUG_AURA_CANDIDATE_LOGS) {
-    console.warn(...args);
+    logger.warn(...args);
   }
 }
 
@@ -589,7 +590,7 @@ function logProductImageRankingMetrics(params: {
   selected: RankedProductImage | undefined;
   selectedReason: string;
 }) {
-  console.info("[LINK_IMAGE_RANKING_METRICS]", {
+  logger.info("[LINK_IMAGE_RANKING_METRICS]", {
     sourceUrl: redactUrlForLogs(params.sourceUrl),
     extractedImageCount: params.extractedImageCount,
     dedupedImageCount: params.dedupedImageCount,

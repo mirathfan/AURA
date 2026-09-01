@@ -1,6 +1,6 @@
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "../../shared/logger";
-import { redactUid } from "../../shared/rateLimit";
+import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
 import {
   normalizeOutfitGenerationInput,
   retrieveOutfitGenerationContext,
@@ -158,11 +158,12 @@ export const previewOutfitGenerationContext = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    await assertFunctionRateLimit(uid, "wardrobeRetrieval", RATE_LIMITS.wardrobeRetrieval);
     logger.info(`${LOG_PREFIX} context preview started`, { uidHash: redactUid(uid) });
     const response = await handlePreviewOutfitGenerationContext(uid, request.data);
     logger.info(`${LOG_PREFIX} context preview success`, {
       uidHash: redactUid(uid),
-      query: response.query,
+      queryLength: response.query.length,
       missingRequiredRoles: response.diagnostics.missingRequiredRoles,
     });
     return response;
@@ -174,11 +175,12 @@ export const generateOutfitRecommendations = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    await assertFunctionRateLimit(uid, "outfitGeneration", RATE_LIMITS.outfitGeneration);
     logger.info(`${LOG_PREFIX} generation started`, { uidHash: redactUid(uid) });
     const response = await handleGenerateOutfitRecommendations(uid, request.data);
     logger.info(`${LOG_PREFIX} generation success`, {
       uidHash: redactUid(uid),
-      query: response.query,
+      queryLength: response.query.length,
       outfitCount: response.outfits.length,
     });
     return response;

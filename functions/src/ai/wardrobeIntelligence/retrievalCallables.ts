@@ -1,7 +1,7 @@
 import { getFirestore } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "../../shared/logger";
-import { redactUid } from "../../shared/rateLimit";
+import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
 import { EMBEDDING_VECTOR_FIELD } from "./config";
 import { createTextEmbedding } from "./embeddings";
 import { safeRecordAuraMetricEvent } from "./metrics";
@@ -102,6 +102,7 @@ export const retrieveWardrobeContext = onCall(
     const uid = requireAuthUid(request.auth?.uid);
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
+    await assertFunctionRateLimit(uid, "wardrobeRetrieval", RATE_LIMITS.wardrobeRetrieval);
     const input = normalizeWardrobeRetrievalInput(request.data);
     const retrievalQueryText = buildWardrobeRetrievalQueryText(input);
     const vectorLimit = rawVectorLimit(input.limit);
@@ -109,7 +110,7 @@ export const retrieveWardrobeContext = onCall(
 
     logger.info(`${LOG_PREFIX} request started`, {
       uidHash,
-      query: input.query,
+      queryLength: input.query.length,
       limit: input.limit,
       vectorLimit,
       includeDiagnostics: input.includeDiagnostics,
