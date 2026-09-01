@@ -25,9 +25,10 @@ let initialized = false;
 let enabled = false;
 
 function nativeBuildVersion() {
+  if (Constants.nativeBuildVersion) return Constants.nativeBuildVersion;
   if (Platform.OS === "ios") return Constants.expoConfig?.ios?.buildNumber ?? null;
   if (Platform.OS === "android") return Constants.expoConfig?.android?.versionCode ?? null;
-  return Constants.nativeBuildVersion ?? null;
+  return null;
 }
 
 function sentryEnvironment() {

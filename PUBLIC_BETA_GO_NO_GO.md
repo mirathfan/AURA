@@ -1,37 +1,38 @@
 # Public Beta Go/No-Go
 
-Decision date: Not yet set.
+Decision date: 2026-08-31
 
-Decision owner: Owner input required.
+Current decision: **NO-GO for inviting external testers**. The code candidate is ready for build 9, but distribution/device/account checks remain release gates.
 
-## Launch Gates
+## Verified Gates
 
-- [ ] No startup crash on the installed beta build.
-- [ ] Account creation, sign in, sign out, and account deletion verified.
-- [ ] Account deletion verified against Firebase Auth, Firestore, Storage, chats, and outfit plans.
-- [ ] Privacy Policy is final, owner-approved, and hosted.
-- [ ] Terms of Use is final, owner-approved, and hosted.
-- [ ] Support URL and support email are live.
-- [ ] App Store Connect beta information is complete.
-- [ ] App Store privacy answers are reviewed and published accurately.
-- [ ] Sentry is enabled for the build.
-- [ ] Sentry event scrubbing is verified with a test event.
-- [ ] Sentry alerts route to an owner-approved support/engineering email.
-- [ ] OpenAI spend monitoring is active.
-- [ ] Firebase/GCP budget alerts are active.
-- [ ] SerpApi cap is active or product search is disabled.
-- [ ] Rate limits are active for AURA chat, streaming chat, image ingestion, product import, product search, voice transcription, outfit generation, and product polish.
-- [ ] Product import does not corrupt images.
-- [ ] AURA does not duplicate or lose messages in normal and poor-network testing.
-- [ ] Known issues and accepted risks are documented.
+- [x] Onboarding crash fix is included in the build-9 source candidate and covered by automated tests.
+- [x] Production logging centrally sanitizes prompts, emails, raw UIDs, URL paths/query strings, secrets, and UID-bearing storage paths.
+- [x] Paid AI endpoints use authenticated, transactional per-user server limits with bounded input/fan-out.
+- [x] Dependency critical findings are resolved; remaining high `sharp` exposure is assessed and documented.
+- [x] Production Sentry DSN accepted a privacy-safe synthetic event tagged `aura@1.0.0+9` / dist `9`.
+- [x] Live privacy, terms, support, and delete-account routes return successfully; support contact is no longer a placeholder.
+- [x] Expo package patches are aligned and the remaining Expo Doctor warning is expected for the checked-in native project.
+- [x] Extraction V2 remains disabled and the current Firebase extraction backend is unchanged.
 
-## Known Issues
+## Open Release Gates
 
-No device/TestFlight issues are recorded by this repository-only stabilization pass. Populate this section after manual QA; do not interpret an empty list as proof that there are no issues.
+- [ ] Build 9 is successfully created, uploaded, and processed in TestFlight.
+- [ ] A physical-iPhone TestFlight install passes fresh signup, onboarding, Closet, AURA, planning, logout/relogin, and reliability testing.
+- [ ] Disposable-account deletion is verified end-to-end against Firebase Auth and associated stored data.
+- [ ] The synthetic/build-9 event is inspected in Sentry for stack readability and privacy; source maps and alert delivery are verified.
+- [ ] Firebase/GCP budget alerts and recipients, OpenAI spend monitoring, and the SerpApi cap/disabled state are verified in their live accounts.
+- [ ] App Store Connect beta metadata, URLs, export compliance, feedback contact, tester instructions, and App Privacy answers are reviewed and completed.
+
+## Accepted Temporary Risks
+
+- `sharp` and `@imgly/background-removal-node` retain high advisories for which the current audit reports no fix. The image path is reachable, but authenticated access, MIME/size validation, timeouts, quotas, per-user rate limits, and isolated Cloud Functions reduce exposure for a small trusted beta.
+- App Check is deferred because released clients do not include valid integration. Enforcing it now would break beta clients; add clients first, monitor tokens, then progressively enforce expensive Functions.
+- Known retailer extraction limitations remain accepted: Zara cloud-origin blocking, Amazon/StockX variability, intermittent JD Sports extraction, Gymshark currency ambiguity, and H&M title cleanup.
 
 ## Decision
 
-- [ ] Go
-- [ ] No-Go
+- [ ] GO
+- [x] NO-GO
 
-Decision notes: Not yet recorded.
+Decision notes: Do not invite external testers until every open release gate above is evidenced against build 9.

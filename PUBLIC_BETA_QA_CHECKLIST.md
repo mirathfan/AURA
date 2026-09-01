@@ -1,6 +1,6 @@
 # Public Beta QA Checklist
 
-Build under test: Record the installed TestFlight build (next intended candidate: 8).
+Build under test: AURA `1.0.0` build `9` (record installed TestFlight build ID).
 
 Tester: Record the tester name.
 
@@ -14,6 +14,7 @@ Date: Record the test date.
 - [ ] Sign in with existing account.
 - [ ] Sign out and sign back in.
 - [ ] Complete onboarding.
+- [ ] Confirm the previous post-auth/onboarding gesture-handler crash does not recur.
 - [ ] Confirm onboarding persists after force quit.
 
 ## Closet And Add Item
@@ -33,6 +34,8 @@ Date: Record the test date.
 
 - [ ] Send a basic styling prompt.
 - [ ] Send a prompt that produces an outfit card.
+- [ ] Confirm streaming response delivery works when enabled.
+- [ ] Send a follow-up and confirm the prior outfit context is retained.
 - [ ] Retry after a failed/poor network response.
 - [ ] Verify AURA does not duplicate messages.
 - [ ] Verify AURA does not lose messages after leaving and returning.
@@ -74,6 +77,7 @@ Date: Record the test date.
 - [ ] Delete account from app.
 - [ ] Confirm app signs out after deletion.
 - [ ] Confirm deleted account cannot access previous data.
+- [ ] Verify the disposable user's Firebase Auth record and designed Firestore/Storage cleanup are complete.
 - [ ] Confirm privacy policy, terms, and support links are reachable.
 
 ## Reliability
@@ -86,6 +90,7 @@ Date: Record the test date.
 - [ ] Sentry is enabled for the build when DSN is configured.
 - [ ] Missing `EXPO_PUBLIC_SENTRY_DSN` does not crash startup.
 - [ ] Crash/error events in Sentry do not include raw prompts, emails, user IDs, product URLs, image URLs, auth headers, cookies, or tokens.
+- [ ] Build-9 Sentry event has the correct release/dist, a readable stack trace/source maps, and reaches the configured alert destination.
 
 ## Notes
 
