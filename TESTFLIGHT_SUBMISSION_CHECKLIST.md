@@ -1,6 +1,6 @@
 # AURA TestFlight Submission Checklist
 
-Repository audit date: 2026-08-31
+Repository audit date: 2026-08-31; backend deployment status updated 2026-09-15
 
 Candidate: iOS `1.0.0` build `9` (EAS build complete and uploaded; Apple processing pending)
 
@@ -14,7 +14,7 @@ Candidate: iOS `1.0.0` build `9` (EAS build complete and uploaded; Apple process
 | Production environment | PASS | EAS production has Firebase, Google client IDs, AURA agent flag, and Sentry DSN | Keep Extraction V2 disabled |
 | Sentry transport/privacy | PARTIAL PASS | Production DSN accepted safe event `7d0b68deac77d94c8a7e108024c165f0`; scrubber tests pass; release uses native build number | Verify event UI, readable source maps, and alert destination in Sentry |
 | Sentry source maps | MANUAL REQUIRED | No `SENTRY_ORG`, `SENTRY_PROJECT`, or `SENTRY_AUTH_TOKEN` is configured in the available EAS environment | Configure/verify before inviting external testers |
-| Backend cost controls | PASS IN SOURCE / DEPLOY BLOCKED | Auth, transactional per-user limits, input caps, bounded retries/fan-out, and a 300-item backfill ceiling are present | Authorized owner must deploy commit `7517314`; current identity receives HTTP 403 |
+| Backend cost controls | PASS LIVE | All 48 Functions are ACTIVE on `closet-app-57146`; authenticated Aura/product/intent checks verified transactional rejection and privacy-safe logs | Monitor rate-limit and spend telemetry during beta |
 | Dependency critical/high risk | PARTIAL PASS | Critical findings reduced from 2 to 0; remaining high findings are `sharp` and its `@imgly` parent with no available fix | Accept documented temporary risk for trusted beta |
 | Public legal/support routes | PASS LIVE | `/privacy`, `/terms`, `/support`, and `/delete-account` return 200; support shows `mirathfan@gmail.com` | Owner/legal approval remains required |
 | App Store metadata/privacy | OWNER REVIEW | Repository drafts exist | Verify and publish accurate answers in App Store Connect |
@@ -26,9 +26,9 @@ Candidate: iOS `1.0.0` build `9` (EAS build complete and uploaded; Apple process
 
 - [x] Commit the onboarding fix and beta hardening without unrelated website/tooling changes.
 - [x] Run mobile, Functions, website, Expo Doctor, dependency-audit, and whitespace validation.
-- [x] Confirm `com.kasat.aura`, version `1.0.0`, production environment, Firebase project `aura-app-25fc9`, and Sentry DSN.
+- [x] Confirm `com.kasat.aura`, version `1.0.0`, production environment, Firebase project `closet-app-57146`, and Sentry DSN.
 - [x] Confirm Extraction V2 remains disabled.
-- [ ] Deploy the reviewed Firebase Functions (blocked by project permission; no update occurred).
+- [x] Deploy the reviewed Firebase Functions to `closet-app-57146` and verify all targeted revisions are ACTIVE.
 - [x] Create and upload EAS production build 9.
 
 ## Before External TestFlight
@@ -36,7 +36,7 @@ Candidate: iOS `1.0.0` build `9` (EAS build complete and uploaded; Apple process
 - [ ] Confirm build 9 finished processing and complete export-compliance prompts.
 - [ ] Install build 9 from TestFlight on a physical iPhone.
 - [ ] Complete every required path in `PUBLIC_BETA_QA_CHECKLIST.md`, including fresh signup/onboarding, Closet, AURA, and planner/saved looks.
-- [ ] Delete a disposable account and verify Auth/data cleanup end-to-end.
+- [x] Delete a disposable account and verify Auth/data cleanup end-to-end (`USER_NOT_FOUND` after cleanup).
 - [ ] Verify the safe Sentry event in the project UI, readable build-9 stack traces/source maps, and a working alert destination.
 - [ ] Verify GCP/Firebase budget thresholds and alert recipients; verify OpenAI spend monitoring and SerpApi cap/disabled state.
 - [ ] Complete TestFlight beta description, tester instructions, known limitations, feedback contact, support/privacy URLs, and export compliance in App Store Connect.

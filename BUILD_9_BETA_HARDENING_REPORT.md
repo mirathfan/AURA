@@ -1,6 +1,6 @@
 # AURA Build 9 Beta Hardening Report
 
-Audit date: 2026-08-31
+Audit date: 2026-08-31; production deployment and live verification updated 2026-09-15
 
 Scope: external TestFlight beta safety only. Extraction V2 remains disabled; no unrelated product or website redesign is included.
 
@@ -93,13 +93,21 @@ The path is reachable because Functions process authenticated user images. For a
 
 App Check remains unenforced. The current mobile clients do not include a valid App Check integration, so immediate enforcement would break build 8 and build 9. For a trusted beta, authentication plus server rate limits is acceptable. Staged rollout: add iOS/Android client integration, release it, monitor valid token traffic, then progressively enforce expensive callables first.
 
+## Production Functions Deployment
+
+- The build-9 mobile configuration and live Functions both use Firebase project `closet-app-57146` in `us-central1`. The earlier `aura-app-25fc9` HTTP 403 was caused by explicitly targeting a stale/wrong project ID, not by missing access to production.
+- The authorized Firebase CLI identity deployed all 48 production Functions containing shared logging/rate-limit code. All 48 are ACTIVE; `askAura` is on source hash `aa7077a124a0ff254b031f8f71046a45d4ea14c8`, and `askAuraStream` is on `ddbdea02014bb2dc78bda6b0b83733d0d4f68d52` after the strict-schema and clean unauthenticated-response fixes.
+- Live authenticated tests passed for AURA callable/stream, the transactional 6/minute AURA boundary, the 20/minute intent-parser boundary, H&M fallback, compatibility V1 extraction, and the legacy preview alias.
+- Production log searches found the pseudonymous UID hash and safe metadata but no synthetic raw prompt marker, raw UID, email, auth token, full H&M path, or URL query string.
+- The disposable verification account and its limiter documents were removed; Firebase Auth returned `USER_NOT_FOUND` afterward.
+
 ## External Account And Device Gates
 
-- Firebase Functions deployment: blocked before update by HTTP 403 (`resourcemanager.projects.get`) for `aura-app-25fc9`; commit `7517314` must be deployed by an authorized project identity before testers are invited.
-- GCP/Firebase budget alert state and recipients: manual required; the available Google account lacks project inspection permission.
+- Firebase Functions deployment: complete on `closet-app-57146`; commit `7517314` hardening and the two follow-up Aura fixes are live and verified.
+- GCP/Firebase budget alert state and recipients: manual required; they were not verified in this Functions deployment task.
 - Sentry alert destination/source maps: manual required; no project session/credentials were available.
 - App Store Connect metadata/privacy/export compliance: manual required; no signed-in session was available.
-- Physical-iPhone TestFlight QA and disposable-account deletion: required after build 9 is processed.
+- Physical-iPhone TestFlight QA: required after build 9 is processed. Disposable-account deletion has been verified against production Firebase Auth and backend cleanup.
 
 ## Build 9 And Submission
 
