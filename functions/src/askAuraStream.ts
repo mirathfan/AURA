@@ -1101,8 +1101,6 @@ async function emitUrlCandidatePreview(params: {
 export const askAuraStream = onRequest(
   { cors: ALLOWED_ORIGINS, secrets: ["OPENAI_API_KEY"], timeoutSeconds: 120 },
   tracedHandler(async (req, res) => {
-    setupAuraStreamResponse(res);
-
     if (req.method === "OPTIONS") {
       res.status(204).end();
       return;
@@ -1120,6 +1118,8 @@ export const askAuraStream = onRequest(
       res.status(401).json({ error: "Missing auth token" });
       return;
     }
+
+    setupAuraStreamResponse(res);
 
     try {
       logger.info("[AURA_BACKEND_VERSION] askAuraStream entry", {
