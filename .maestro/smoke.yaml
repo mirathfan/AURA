@@ -1,0 +1,6 @@
+appId: com.kasat.aura
+---
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 10000
+- assertVisible: "AURA SETUP"

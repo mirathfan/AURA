@@ -1,0 +1,6 @@
+# Deny by default. Never upload the repository, environment, tests or node_modules.
+*
+!index.js
+!package.json
+!package-lock.json
+!.gcloudignore
