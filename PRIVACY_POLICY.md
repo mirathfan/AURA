@@ -1,50 +1,49 @@
 # AURA Privacy Policy
 
-Last updated: 2026-08-15
+Updated October 10, 2026.
 
-Status: Prepared for beta; owner approval and final production contact/domain are required before external distribution.
+## Information and purposes
 
-This policy explains how AURA: AI Personal Stylist ("AURA") handles information during beta. The deployable version is the Next.js `/privacy` route.
+AURA processes your Firebase account ID, sign-in provider, email and name when supplied, style/fit/size preferences, closet metadata and photos, chat and audio input, product links, saved/planned/worn outfits and feedback. These support account access, wardrobe organization, personalized styling, planning, security and operation. Avoid including sensitive personal details in photos, messages or links.
 
-## Information AURA Processes
+## Optional third-party AI sharing
 
-AURA may process account identifiers, email address, display name, authentication provider, style and fit preferences, closet item metadata, clothing photos, edited or background-removed images, chat messages, saved and planned outfits, wear history, feedback, and submitted product links or metadata.
+With your permission, AURA sends selected data to OpenAI for styling chat, outfit generation, photo/item analysis, voice transcription, and searchable wardrobe and style-memory embeddings. This includes messages and recent conversation, uploaded clothing/outfit photos, temporary audio, item and retailer-link details, style/fit/size preferences, feedback and saved/worn outfit context. Weather or calendar context you include may also be used. Photos and free text can contain personal information. Native voice dictation may send audio to Apple or Google speech recognition services, depending on your device, after this choice and the separate microphone/speech permission.
 
-With permission, AURA may use location for weather, read calendar context for outfit planning, and use microphone or speech input for voice chat. Users can deny or revoke device permissions in iOS Settings.
+Acceptance also permits automatic AI analysis and indexing of your existing and future closet items. When live shopping search is enabled, SerpApi receives shopping queries and country/language settings to find product recommendations. Firebase/Google Cloud continues to store and process account, closet and app data to operate AURA.
 
-## Uses
+This is optional. Not Now keeps AI sharing off. You can still sign in, upload photos, remove backgrounds locally, manage items manually, browse saved outfits, manage your account and delete it. AI Photo Refinement/Polish remains off in Beta 1.
 
-AURA uses information to authenticate users, store and organize closets, process garment images, extract item attributes, generate closet-grounded styling suggestions, import products, plan outfits, remember feedback, enforce quotas, prevent abuse, diagnose errors, and operate the beta.
+You can revoke this permission in Profile → Privacy & AI. Revocation stops new AI requests and retries after the server records it; AURA attempts to cancel active requests. Data already sent cannot be recalled, and a request already starting may finish. Previously saved data is not deleted by revocation. OpenAI and other processors may retain data under their policies; this is not a zero-retention guarantee.
 
-## AI And Cloud Processing
+## Cloud, sign-in and storage
 
-AURA uses Firebase and Google Cloud for authentication, Firestore, Storage, Cloud Functions, and operational logs. Selected prompts, recent conversation context, wardrobe metadata, preferences, product metadata, images, or temporary audio may be sent to OpenAI when required by an AI feature. The implementation is designed not to send authentication tokens or unnecessary account contact information in AI requests.
+Firebase/Google Cloud provides Authentication, Firestore, Storage, Functions and operational logs. Apple or Google processes authentication when you choose that sign-in method. Images and app records are stored under user-scoped paths. Cloud access rules are account-scoped, but anyone who receives a tokenized media download link may be able to access that media; do not share those links. Background removal performed locally does not send the image to an AI provider; cloud image processing may also run within AURA's backend.
 
-## Providers
+## Device permissions and other services
 
-Depending on enabled beta features, AURA may use Firebase/Google Cloud, OpenAI, Apple, Google Sign-In, Sentry, weather providers such as Open-Meteo, and optional shopping/search or affiliate providers. Product search and affiliate functionality may remain disabled during beta.
+Photo/camera access supports uploads. Microphone/speech permissions support voice input; native speech recognition may use Apple/Google services depending on the device, and backend transcription sends audio to OpenAI only with AI consent. Location permission enables weather requests to Open-Meteo using coordinates. Calendar permission lets AURA read event context and plan outfits. OS permissions are separate from AI consent and can be changed in Settings. Retailer imports fetch pages/images from the supplied retailer; opening a retailer or affiliate link shares browser/device information with that site. Optional live search uses SerpApi; affiliate links may involve additional retailer/network processing.
 
-## Diagnostics
+## Analytics and crash reporting
 
-When configured, Sentry receives crash and error diagnostics. AURA disables default PII collection, scrubs sensitive fields and user content, restricts tags, and uses an anonymous hashed user identifier. Firebase and Google Cloud may retain operational logs.
+AURA records first-party launch, feature-use, feedback and commerce events in Firebase, generally linked to your account ID. When configured, Sentry receives crash/error diagnostics, app/build/device context and a hashed account identifier. Hashing is pseudonymization, not guaranteed anonymity. The app disables default PII collection and scrubs URLs, credentials and user content from its Sentry events; Firebase/Google Cloud and service providers also maintain operational/security logs. This AI permission does not disable essential cloud operation or diagnostics.
 
-## Sharing And Retention
+## Retention and deletion
 
-AURA does not sell personal information. Information is shared with service providers only as needed to operate, secure, diagnose, or provide a requested feature, or as required by law.
+Account, closet, chat, preference, outfit and uploaded-image records generally remain until removed or the account is deleted. Some AI/usage records, cached product results, logs and backups have separate retention; exact provider/project retention settings still require verification before external beta. AURA sets OpenAI response storage off, but abuse-monitoring or legally required retention can still apply. Revocation is not deletion and cannot retract data already received by a provider. Profile → Account → Delete account requests removal of Firebase Auth, the user's Firestore tree, owned Storage files and known rate-limit records. Accepted deletion requests lock the account against new app data and use a server-side cleanup job with automatic retries. Cleanup normally waits at least ten minutes for earlier activity to finish; outages or large accounts can take longer. A minimal deletion-status record containing the account ID remains to prevent delayed work from restoring data. Apple-linked accounts are asked to authorize token revocation; if that fails, account deletion can continue with instructions to remove AURA from Sign in with Apple manually. Processor logs, backups, Cloud Storage recovery/version history and legacy shared product caches are not guaranteed to be removed immediately. Website beta-waitlist records in Google Sheets are separate from the Firebase app account and require a request to support@getaura.app.
 
-User-scoped account, closet, chat, outfit, preference, and image data is generally kept until the user removes content or deletes the account. Operational logs, processor logs, backups, and non-user-specific caches may remain for limited periods under provider retention practices.
+## Sharing and choices
 
-## Account Deletion
+AURA does not sell personal information. Data is shared to provide the described services, protect the service, or meet legal requirements. You may decline/revoke AI sharing, manage device permissions, edit/remove supported content or request account deletion. Missing or outdated consent keeps AI sharing off until you explicitly accept the current disclosure. A new account does not inherit another account's permission.
 
-In-app path: **Profile tab → Account → Danger Zone → Delete account**, followed by two confirmations.
+## Privacy and support contact
 
-The callable backend removes the Firebase Authentication user, the user’s Firestore document tree and subcollections, owned files under `users/{uid}/` in Firebase Storage, and known user-linked function rate-limit records. After success, the app clears user-scoped local data and signs out. Provider logs, backups, and non-user-specific caches may remain for limited periods.
+Privacy Policy: https://aura-kasatlabs.vercel.app/privacy
 
-## Children
+Terms: https://aura-kasatlabs.vercel.app/terms
 
-AURA is not directed to children. The owner must approve the final minimum age and App Store age rating before external beta distribution.
+Privacy and support: support@getaura.app. The Privacy Policy is bundled in AURA and remains readable if the website is unavailable.
 
-## Contact And Published URL
+## Beta status and contact
 
-- Privacy/support contact: value configured as `NEXT_PUBLIC_SUPPORT_EMAIL` on the production website.
-- Published URL after deployment: `${NEXT_PUBLIC_SITE_URL}/privacy`.
+This policy describes the reviewed beta implementation. The consent-enforcement changes must be deployed and verified before external distribution; this document is not evidence that an older live backend enforces them. AURA is not directed to children. Final minimum age, provider retention and App Store privacy answers require owner approval before release. Public-page accessibility and email deliverability remain unverified release gates.

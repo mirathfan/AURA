@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "status": "PROPOSAL_ONLY_NOT_EXECUTED",
+  "approved": false,
+  "reviewedUTC": "2026-11-11T17:26:59.016953+00:00",
+  "projectId": "aura-rehearsal-20261011",
+  "projectNumber": "1087494190017",
+  "parent": null,
+  "owner": "mirathfan@gmail.com",
+  "billingAccount": "01B4D2-62CAD1-5848FD",
+  "billingEnabledNow": false,
+  "baselineIam": {
+    "bindings": [
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+        ],
+        "role": "roles/cloudbuild.serviceAgent"
+      },
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@containerregistry.iam.gserviceaccount.com"
+        ],
+        "role": "roles/containerregistry.ServiceAgent"
+      },
+      {
+        "members": [
+          "user:mirathfan@gmail.com"
+        ],
+        "role": "roles/owner"
+      },
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@gcp-sa-pubsub.iam.gserviceaccount.com"
+        ],
+        "role": "roles/pubsub.serviceAgent"
+      },
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@serverless-robot-prod.iam.gserviceaccount.com"
+        ],
+        "role": "roles/run.serviceAgent"
+      }
+    ],
+    "etag": "BwZgA11A-I0=",
+    "version": 1
+  },
+  "enabledApisToPreserve": [
+    "analyticshub.googleapis.com",
+    "apptopology.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "bigquery.googleapis.com",
+    "bigqueryconnection.googleapis.com",
+    "bigquerydatapolicy.googleapis.com",
+    "bigquerydatatransfer.googleapis.com",
+    "bigquerymigration.googleapis.com",
+    "bigqueryreservation.googleapis.com",
+    "bigquerystorage.googleapis.com",
+    "cloudapis.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "cloudtrace.googleapis.com",
+    "containerregistry.googleapis.com",
+    "dataform.googleapis.com",
+    "dataplex.googleapis.com",
+    "datastore.googleapis.com",
+    "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "logging.googleapis.com",
+    "monitoring.googleapis.com",
+    "pubsub.googleapis.com",
+    "run.googleapis.com",
+    "servicemanagement.googleapis.com",
+    "serviceusage.googleapis.com",
+    "sql-component.googleapis.com",
+    "storage-api.googleapis.com",
+    "storage-component.googleapis.com",
+    "storage.googleapis.com",
+    "telemetry.googleapis.com"
+  ],
+  "apisToEnable": [],
+  "apisToDisable": [],
+  "broadRolesToRestore": [],
+  "policyChanges": [],
+  "survivingAlertBudgetId": "5f917c50-235c-4cb5-bb70-076c77aa8ba5",
+  "missingRunCapId": "062874a3-795e-402e-bec2-6997434fba45",
+  "capDiagnosis": "ABSENT_FROM_ACCOUNT_UI; API_READ_BLOCKED_BY_SERVICE_DISABLED; DELETION_CAUSE_UNVERIFIED",
+  "preserveCostReviewsUTC": [
+    "2026-11-12T15:11:00Z",
+    "2026-11-14T15:11:00Z"
+  ],
+  "intendedTotalBudgetUsd": 25,
+  "hardTotalCap": false,
+  "operationalStopActualOrForecastUsd": 2,
+  "safeguardsOnlyCandidate": {
+    "requiresNewApproval": true,
+    "maxBillingLinkCycles": 1,
+    "maxAttendedMinutes": 15,
+    "scope": [
+      "link_exact_project_to_exact_account",
+      "read_old_cap_before_any_creation",
+      "create_at_most_one_1_USD_Run_cap_only_if_absent",
+      "verify_configured_scope_and_state",
+      "inspect_costs_resources_IAM",
+      "unlink_exact_project_and_verify",
+      "stop"
+    ],
+    "capServiceId": "152E-C115-5142",
+    "capMonthlyUsd": 1,
+    "reuseExistingAlerts": true,
+    "workloads": 0,
+    "newServiceAccounts": 0,
+    "iamChanges": 0,
+    "sourceUploads": 0,
+    "budgetDeletes": 0,
+    "prerequisites": [
+      "fresh_readonly_baseline",
+      "explicit_approval",
+      "prior_24h_72h_cost_reviews_complete_or_explicitly_reviewed_exception"
+    ]
+  },
+  "laterCanaryCandidate": {
+    "requiresSeparateApproval": true,
+    "readyToExecute": false,
+    "region": "us-central1",
+    "service": "aura-rehearsal-health",
+    "runtime": "nodejs22",
+    "entryPoint": "health",
+    "runtimeServiceAccount": "aura-canary-runtime@aura-rehearsal-20261011.iam.gserviceaccount.com",
+    "runtimeRoles": [],
+    "buildServiceAccount": "aura-canary-build@aura-rehearsal-20261011.iam.gserviceaccount.com",
+    "buildProjectRoles": [
+      "roles/run.builder"
+    ],
+    "additionalHumanProjectRoles": [],
+    "invoker": "user:mirathfan@gmail.com",
+    "serviceInvokerRole": "roles/run.invoker",
+    "sourceBucket": "aura-rehearsal-20261011-canary-source",
+    "repository": "aura-canary",
+    "maxAdditionalManagedBuckets": 1,
+    "optionalManagedAgentToExplicitlyReview": {
+      "principal": "serviceAccount:service-1087494190017@gcp-sa-artifactregistry.iam.gserviceaccount.com",
+      "role": "roles/artifactregistry.serviceAgent"
+    },
+    "maxBuildDeployAttempts": 1,
+    "maxAttendedMinutes": 60,
+    "beginCleanupByMinute": 40,
+    "operatorCancelBuildAfterMinutes": 15,
+    "operatorInspectIntervalMinutes": 5,
+    "cpu": 1,
+    "memoryMiB": 512,
+    "minInstances": 0,
+    "maxInstances": 1,
+    "concurrency": 1,
+    "timeoutSeconds": 15,
+    "authenticatedRequests": 20,
+    "anonymousNegativeRequests": 1,
+    "retries": 0,
+    "sourceByteLimit": 1048576,
+    "artifactByteStopTarget": 1073741824,
+    "logIngestByteStopTarget": 52428800,
+    "egressByteStopTarget": 104857600,
+    "paidAiCalls": 0,
+    "eventTriggers": 0,
+    "schedulerJobs": 0,
+    "taskQueues": 0,
+    "pubsubTopicsAuthorized": 0,
+    "restoreBroadGrants": false,
+    "completionRequires": [
+      "no_active_build_or_deploy_operation",
+      "no_service_revision_or_image_or_live_source_data",
+      "dedicated_identity_grants_removed",
+      "billing_disabled",
+      "delayed_cost_reviews_retained"
+    ],
+    "unresolved": [
+      "cap_lifecycle_and_live_recovery",
+      "future_automatic_grants_no_policy_prevention",
+      "managed_build_notifications_and_bucket_scope",
+      "actual_machine_timeout_and_identity_not_cloud_validated",
+      "future_cleanup_emergency_authorization_must_be_explicit"
+    ]
+  }
+}

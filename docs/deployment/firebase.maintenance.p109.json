@@ -1,0 +1,11 @@
+{
+  "firestore": { "rules": "firestore.maintenance.p109.rules" },
+  "storage": { "rules": "storage.maintenance.p109.rules" },
+  "emulators": {
+    "auth": { "host": "127.0.0.1", "port": 9098 },
+    "firestore": { "host": "127.0.0.1", "port": 8089 },
+    "storage": { "host": "127.0.0.1", "port": 9198 },
+    "ui": { "enabled": false },
+    "singleProjectMode": true
+  }
+}

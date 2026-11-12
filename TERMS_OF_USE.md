@@ -40,5 +40,5 @@ AURA is provided "as is" and "as available." To the extent permitted by law, no 
 
 ## Contact And Published URL
 
-- Support contact: value configured as `NEXT_PUBLIC_SUPPORT_EMAIL` on the production website.
-- Published URL after deployment: `${NEXT_PUBLIC_SITE_URL}/terms`.
+- Support contact: `support@getaura.app` (also the privacy contact; deliverability unverified).
+- Published URL after deployment: `https://aura-kasatlabs.vercel.app/terms` (public accessibility unverified).

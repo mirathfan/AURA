@@ -1,0 +1,15 @@
+{
+  "displayName": "AURA approved migration invocation hold \u2014 REHEARSAL REQUIRED",
+  "rules": [
+    {
+      "denyRule": {
+        "deniedPrincipals": [
+          "principalSet://goog/public:all"
+        ],
+        "deniedPermissions": [
+          "run.googleapis.com/routes.invoke"
+        ]
+      }
+    }
+  ]
+}

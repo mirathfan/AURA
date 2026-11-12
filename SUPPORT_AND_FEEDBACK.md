@@ -1,8 +1,8 @@
 # AURA Support And Feedback
 
-- Support email: production value of `NEXT_PUBLIC_SUPPORT_EMAIL` (owner input required).
-- Support URL after deployment: `${NEXT_PUBLIC_SITE_URL}/support`.
-- Account deletion URL after deployment: `${NEXT_PUBLIC_SITE_URL}/delete-account`.
+- Support email: `support@getaura.app` (also the privacy contact; deliverability unverified).
+- Support URL after deployment: `https://aura-kasatlabs.vercel.app/support` (public accessibility unverified).
+- Account deletion URL after deployment: `https://aura-kasatlabs.vercel.app/delete-account` (public accessibility unverified).
 
 ## How Testers Should Report Bugs
 

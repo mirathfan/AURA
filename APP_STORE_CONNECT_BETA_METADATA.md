@@ -32,11 +32,11 @@ Secondary category: Shopping or Productivity, depending on whether shopping/sear
 
 ## URLs
 
-Support URL: `${NEXT_PUBLIC_SITE_URL}/support` after website deployment.
+Support URL: `https://aura-kasatlabs.vercel.app/support` (public accessibility unverified).
 
-Privacy Policy URL: `${NEXT_PUBLIC_SITE_URL}/privacy` after website deployment.
+Privacy Policy URL: `https://aura-kasatlabs.vercel.app/privacy` (public accessibility unverified).
 
-Terms URL: `${NEXT_PUBLIC_SITE_URL}/terms` after website deployment.
+Terms URL: `https://aura-kasatlabs.vercel.app/terms` (public accessibility unverified).
 
 ## Beta App Description
 

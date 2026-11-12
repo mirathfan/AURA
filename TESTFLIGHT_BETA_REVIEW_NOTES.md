@@ -38,10 +38,10 @@ Backend deletion is intended to remove Firebase Auth, Firestore `users/{uid}` da
 
 ## URLs
 
-Privacy Policy URL: `${NEXT_PUBLIC_SITE_URL}/privacy` after deployment.
+Privacy Policy URL: `https://aura-kasatlabs.vercel.app/privacy` (public accessibility unverified).
 
-Support URL: `${NEXT_PUBLIC_SITE_URL}/support` after deployment.
+Support URL: `https://aura-kasatlabs.vercel.app/support` (public accessibility unverified).
 
-Terms URL: `${NEXT_PUBLIC_SITE_URL}/terms` after deployment.
+Terms URL: `https://aura-kasatlabs.vercel.app/terms` (public accessibility unverified).
 
-Contact email: Production value of `NEXT_PUBLIC_SUPPORT_EMAIL` (owner input required).
+Contact email: `support@getaura.app` (also the privacy contact; deliverability unverified).

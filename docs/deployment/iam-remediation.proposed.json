@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 1,
+  "status": "PROPOSED_NOT_EXECUTED",
+  "approved": false,
+  "projectId": "aura-rehearsal-20261011",
+  "projectNumber": "1087494190017",
+  "parent": null,
+  "billingEnabledBefore": false,
+  "billingEnabledAfter": false,
+  "observedAtUTC": "2026-11-11T15:37:22.675130+00:00",
+  "iamBefore": {
+    "bindings": [
+      {
+        "members": [
+          "serviceAccount:1087494190017@cloudbuild.gserviceaccount.com"
+        ],
+        "role": "roles/cloudbuild.builds.builder"
+      },
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+        ],
+        "role": "roles/cloudbuild.serviceAgent"
+      },
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@containerregistry.iam.gserviceaccount.com"
+        ],
+        "role": "roles/containerregistry.ServiceAgent"
+      },
+      {
+        "members": [
+          "serviceAccount:1087494190017-compute@developer.gserviceaccount.com"
+        ],
+        "role": "roles/editor"
+      },
+      {
+        "members": [
+          "user:mirathfan@gmail.com"
+        ],
+        "role": "roles/owner"
+      },
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@gcp-sa-pubsub.iam.gserviceaccount.com"
+        ],
+        "role": "roles/pubsub.serviceAgent"
+      },
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@serverless-robot-prod.iam.gserviceaccount.com"
+        ],
+        "role": "roles/run.serviceAgent"
+      }
+    ],
+    "etag": "BwZgAZN7L-s=",
+    "version": 1
+  },
+  "iamAfterExpected": {
+    "bindings": [
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+        ],
+        "role": "roles/cloudbuild.serviceAgent"
+      },
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@containerregistry.iam.gserviceaccount.com"
+        ],
+        "role": "roles/containerregistry.ServiceAgent"
+      },
+      {
+        "members": [
+          "user:mirathfan@gmail.com"
+        ],
+        "role": "roles/owner"
+      },
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@gcp-sa-pubsub.iam.gserviceaccount.com"
+        ],
+        "role": "roles/pubsub.serviceAgent"
+      },
+      {
+        "members": [
+          "serviceAccount:service-1087494190017@serverless-robot-prod.iam.gserviceaccount.com"
+        ],
+        "role": "roles/run.serviceAgent"
+      }
+    ],
+    "version": 1
+  },
+  "removeBindings": [
+    {
+      "member": "serviceAccount:1087494190017-compute@developer.gserviceaccount.com",
+      "role": "roles/editor"
+    },
+    {
+      "member": "serviceAccount:1087494190017@cloudbuild.gserviceaccount.com",
+      "role": "roles/cloudbuild.builds.builder"
+    }
+  ],
+  "addBindings": [],
+  "serviceAccountsToCreate": [],
+  "serviceAccountsToDelete": [],
+  "preCanaryEnabledApis": [
+    "analyticshub.googleapis.com",
+    "apptopology.googleapis.com",
+    "bigquery.googleapis.com",
+    "bigqueryconnection.googleapis.com",
+    "bigquerydatapolicy.googleapis.com",
+    "bigquerydatatransfer.googleapis.com",
+    "bigquerymigration.googleapis.com",
+    "bigqueryreservation.googleapis.com",
+    "bigquerystorage.googleapis.com",
+    "cloudapis.googleapis.com",
+    "cloudtrace.googleapis.com",
+    "dataform.googleapis.com",
+    "dataplex.googleapis.com",
+    "datastore.googleapis.com",
+    "logging.googleapis.com",
+    "monitoring.googleapis.com",
+    "servicemanagement.googleapis.com",
+    "serviceusage.googleapis.com",
+    "sql-component.googleapis.com",
+    "storage-api.googleapis.com",
+    "storage-component.googleapis.com",
+    "storage.googleapis.com",
+    "telemetry.googleapis.com"
+  ],
+  "enabledApisBefore": [
+    "analyticshub.googleapis.com",
+    "apptopology.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "bigquery.googleapis.com",
+    "bigqueryconnection.googleapis.com",
+    "bigquerydatapolicy.googleapis.com",
+    "bigquerydatatransfer.googleapis.com",
+    "bigquerymigration.googleapis.com",
+    "bigqueryreservation.googleapis.com",
+    "bigquerystorage.googleapis.com",
+    "cloudapis.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "cloudtrace.googleapis.com",
+    "containerregistry.googleapis.com",
+    "dataform.googleapis.com",
+    "dataplex.googleapis.com",
+    "datastore.googleapis.com",
+    "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "logging.googleapis.com",
+    "monitoring.googleapis.com",
+    "pubsub.googleapis.com",
+    "run.googleapis.com",
+    "servicemanagement.googleapis.com",
+    "serviceusage.googleapis.com",
+    "sql-component.googleapis.com",
+    "storage-api.googleapis.com",
+    "storage-component.googleapis.com",
+    "storage.googleapis.com",
+    "telemetry.googleapis.com"
+  ],
+  "enabledApisAfter": [
+    "analyticshub.googleapis.com",
+    "apptopology.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "bigquery.googleapis.com",
+    "bigqueryconnection.googleapis.com",
+    "bigquerydatapolicy.googleapis.com",
+    "bigquerydatatransfer.googleapis.com",
+    "bigquerymigration.googleapis.com",
+    "bigqueryreservation.googleapis.com",
+    "bigquerystorage.googleapis.com",
+    "cloudapis.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "cloudtrace.googleapis.com",
+    "containerregistry.googleapis.com",
+    "dataform.googleapis.com",
+    "dataplex.googleapis.com",
+    "datastore.googleapis.com",
+    "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "logging.googleapis.com",
+    "monitoring.googleapis.com",
+    "pubsub.googleapis.com",
+    "run.googleapis.com",
+    "servicemanagement.googleapis.com",
+    "serviceusage.googleapis.com",
+    "sql-component.googleapis.com",
+    "storage-api.googleapis.com",
+    "storage-component.googleapis.com",
+    "storage.googleapis.com",
+    "telemetry.googleapis.com"
+  ],
+  "apisAddedSinceBaseline": [
+    "artifactregistry.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "containerregistry.googleapis.com",
+    "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "pubsub.googleapis.com",
+    "run.googleapis.com"
+  ],
+  "apisRemovedSinceBaseline": [],
+  "apisToEnable": [],
+  "apisToDisable": [],
+  "policiesToMutate": [],
+  "budgetMutations": [],
+  "preserveAlertBudgetId": "5f917c50-235c-4cb5-bb70-076c77aa8ba5",
+  "oldRunCapBudgetId": "062874a3-795e-402e-bec2-6997434fba45",
+  "oldRunCapCurrentState": "NOT_LISTED_AND_DIRECT_RESOURCE_LOOKUP_NOT_FOUND",
+  "canaryExecutionApprovedByThisProposal": false,
+  "cloudResourcesToCreate": [],
+  "scopeDecision": "READY_FOR_TWO_BINDING_REMOVALS_ONLY_PENDING_EXPLICIT_APPROVAL",
+  "deferred": [
+    "API disablement: dependency read methods unavailable",
+    "Organization policy changes: current operator lacks write permissions",
+    "Billing relink, new cap and canary execution: outside remediation scope"
+  ]
+}

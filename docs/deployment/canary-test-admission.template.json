@@ -1,0 +1,15 @@
+{
+  "approved": false,
+  "approvalReference": "",
+  "projectId": "aura-rehearsal-20261011",
+  "projectNumber": "1087494190017",
+  "authenticatedRequests": 20,
+  "anonymousNegativeRequests": 1,
+  "runCapConfigured": false,
+  "alertsConfigured": false,
+  "observedCostUsd": null,
+  "observedForecastUsd": null,
+  "serviceUrl": "",
+  "imageDigest": "",
+  "expiresAt": ""
+}
