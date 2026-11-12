@@ -1,184 +1,75 @@
-import { getAuth } from "firebase-admin/auth";
-import {
-  CollectionReference,
-  DocumentReference,
-  getFirestore,
-  WriteBatch,
-} from "firebase-admin/firestore";
+import { ACCOUNT_DELETION_CONTRACT } from "../../shared/releaseContract";
+import { recoverRetiredMedia, removeRetiredUpload, queueMediaSweep, recoverMediaSweeps, recoverMediaInventories, recoverExpiredMediaLocks } from "./shared/mediaSafety";
+import { recoverStalledIngestion } from "./shared/ingestionLifecycle";
+import { recoverItemMedia, removeDeletedItemUpload } from "./shared/itemLifecycle";
+import { recoverWardrobeIndexing } from "./ai/wardrobeIntelligence/indexingRecovery";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
-import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-
-import {
-  RATE_LIMITS,
-  assertFunctionRateLimit,
-  redactUid,
-} from "./shared/rateLimit";
-
-const FIRESTORE_BATCH_LIMIT = 400;
-const STORAGE_DELETE_BATCH_LIMIT = 100;
-
-type DeleteCounts = {
-  firestoreDocumentsDeleted: number;
-  storageFilesDeleted: number;
-  rateLimitDocumentsDeleted: number;
-  authUserDeleted: boolean;
-};
-
-async function commitBatch(batch: WriteBatch, pendingWrites: number) {
-  if (pendingWrites > 0) await batch.commit();
-}
-
-async function deleteDocumentTree(docRef: DocumentReference): Promise<number> {
-  let deleted = 0;
-  const subcollections = await docRef.listCollections();
-  for (const subcollection of subcollections) {
-    deleted += await deleteCollectionTree(subcollection);
-  }
-  await docRef.delete();
-  return deleted + 1;
-}
-
-async function deleteCollectionTree(collectionRef: CollectionReference): Promise<number> {
-  let deleted = 0;
-  let hasMoreDocuments = true;
-  while (hasMoreDocuments) {
-    const snapshot = await collectionRef.limit(FIRESTORE_BATCH_LIMIT).get();
-    if (snapshot.empty) {
-      hasMoreDocuments = false;
-      continue;
-    }
-
-    let batch = getFirestore().batch();
-    let pendingWrites = 0;
-    for (const doc of snapshot.docs) {
-      const subcollections = await doc.ref.listCollections();
-      for (const subcollection of subcollections) {
-        deleted += await deleteCollectionTree(subcollection);
-      }
-      batch.delete(doc.ref);
-      pendingWrites += 1;
-      deleted += 1;
-      if (pendingWrites >= FIRESTORE_BATCH_LIMIT) {
-        await commitBatch(batch, pendingWrites);
-        batch = getFirestore().batch();
-        pendingWrites = 0;
-      }
-    }
-    await commitBatch(batch, pendingWrites);
-  }
-  return deleted;
-}
-
-async function deleteUserStorageFiles(uid: string) {
-  const bucket = getStorage().bucket();
-  const [files] = await bucket.getFiles({ prefix: `users/${uid}/` });
-  for (let index = 0; index < files.length; index += STORAGE_DELETE_BATCH_LIMIT) {
-    const chunk = files.slice(index, index + STORAGE_DELETE_BATCH_LIMIT);
-    await Promise.all(
-      chunk.map((file) =>
-        file.delete().catch((error) => {
-          if ((error as { code?: unknown })?.code === 404) return;
-          throw error;
-        }),
-      ),
-    );
-  }
-  return files.length;
-}
-
-async function deleteUserRateLimitDocs(uidHash: string, uid: string) {
-  let deleted = 0;
-  const db = getFirestore();
-  for (const endpoint of Object.keys(RATE_LIMITS)) {
-    const userRef = db
-      .collection("functionRateLimits")
-      .doc(endpoint)
-      .collection("users")
-      .doc(uidHash);
-    const windows = await userRef.collection("windows").get();
-    let batch = db.batch();
-    let pendingWrites = 0;
-    for (const docSnap of windows.docs) {
-      batch.delete(docSnap.ref);
-      pendingWrites += 1;
-      deleted += 1;
-      if (pendingWrites >= FIRESTORE_BATCH_LIMIT) {
-        await commitBatch(batch, pendingWrites);
-        batch = db.batch();
-        pendingWrites = 0;
-      }
-    }
-    batch.delete(userRef);
-    pendingWrites += 1;
-    deleted += 1;
-    await commitBatch(batch, pendingWrites);
-  }
-  const legacyParseIntentRef = db
-    .collection("functionRateLimits")
-    .doc("parseOutfitIntent")
-    .collection("users")
-    .doc(uid);
-  const legacyParseIntentSnap = await legacyParseIntentRef.get();
-  if (legacyParseIntentSnap.exists) {
-    deleted += await deleteDocumentTree(legacyParseIntentRef);
-  }
-  return deleted;
-}
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onObjectFinalized } from "firebase-functions/v2/storage";
+import { onSchedule } from "firebase-functions/v2/scheduler";
+import { tracedHandler } from "./shared/logger";
+import { assertRecentAuthentication } from "./shared/recentAuthentication";
+import { DELETION_COLLECTION, deletionRef } from "./shared/accountLifecycle";
+import { beginAccountDeletion, processAccountDeletion, publicDeletionStatus } from "./shared/accountDeletionJob";
 
 export const deleteAccountData = onCall(
   { timeoutSeconds: 540, memory: "512MiB" },
-  tracedHandler(async (request): Promise<{ ok: true } & DeleteCounts> => {
+  tracedHandler(async (request) => {
     const uid = request.auth?.uid;
-    if (!uid) {
-      throw new HttpsError("unauthenticated", "User must be signed in.");
+    if (!uid) throw new HttpsError("unauthenticated", "Sign in to delete your account.");
+    if (request.data?.uid !== undefined && request.data.uid !== uid) {
+      throw new HttpsError("permission-denied", "You can only delete your own account.");
     }
-
-    const requestedUid = String(request.data?.uid ?? "").trim();
-    if (requestedUid && requestedUid !== uid) {
-      throw new HttpsError("permission-denied", "You can only delete your own account data.");
+    // Existing accepted requests can be checked/retried even after auth_time
+    // ages out. Only the FIRST, destructive acceptance needs recent login.
+    if (!(await deletionRef(uid).get()).exists) {
+      assertRecentAuthentication(request.auth.token.auth_time);
+      if (request.data?.deletionContract !== ACCOUNT_DELETION_CONTRACT) throw new HttpsError("failed-precondition", "Update AURA in TestFlight to manage account deletion. Your account has not been changed. Contact support@getaura.app for help.", { code: "CLIENT_UPGRADE_REQUIRED" });
+      await beginAccountDeletion(uid, request.data?.allowAppleFallback === true);
     }
-    await assertFunctionRateLimit(uid, "accountDelete", RATE_LIMITS.accountDelete);
-    const uidHash = redactUid(uid);
-    setLogContext({ uidHash });
-
-    const userRef = getFirestore().collection("users").doc(uid);
-    logger.info("[ACCOUNT_DELETE] starting account data deletion", { uidHash });
-
-    const firestoreDocumentsDeleted = await deleteDocumentTree(userRef);
-    const storageFilesDeleted = await deleteUserStorageFiles(uid);
-    const rateLimitDocumentsDeleted = await deleteUserRateLimitDocs(uidHash, uid);
-    let authUserDeleted = false;
-    try {
-      await getAuth().deleteUser(uid);
-      authUserDeleted = true;
-    } catch (error) {
-      if ((error as { code?: unknown })?.code !== "auth/user-not-found") {
-        logger.error("[ACCOUNT_DELETE] auth deletion failed", {
-          uidHash,
-          firestoreDocumentsDeleted,
-          storageFilesDeleted,
-          rateLimitDocumentsDeleted,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throw new HttpsError("internal", "Account data was deleted, but Auth deletion failed.");
-      }
-    }
-
-    logger.info("[ACCOUNT_DELETE] account data deletion complete", {
-      uidHash,
-      firestoreDocumentsDeleted,
-      storageFilesDeleted,
-      rateLimitDocumentsDeleted,
-      authUserDeleted,
-    });
-
-    return {
-      ok: true,
-      firestoreDocumentsDeleted,
-      storageFilesDeleted,
-      rateLimitDocumentsDeleted,
-      authUserDeleted,
-    };
+    if (request.data?.deletionContract !== ACCOUNT_DELETION_CONTRACT) throw new HttpsError("failed-precondition", "Update AURA to view deletion progress. Any previously accepted deletion will continue.", { code: "CLIENT_UPGRADE_REQUIRED" });
+    await processAccountDeletion(uid);
+    const status = publicDeletionStatus((await deletionRef(uid).get()).data());
+    return { ...status, ok: status.state === "completed" };
   }),
 );
+export const getAccountDeletionStatus = onCall({}, async (request) => {
+  if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Sign in to check deletion.");
+  const snap = await deletionRef(request.auth.uid).get();
+  return snap.exists ? publicDeletionStatus(snap.data()) : null;
+});
+export const continueAccountDeletion = onDocumentCreated({
+  document: `${DELETION_COLLECTION}/{uid}`, retry: true, timeoutSeconds: 540, memory: "512MiB",
+}, async (event) => { await processAccountDeletion(event.params.uid); });
+// A persisted dueAt recovers lost events AND a worker killed before its catch.
+// Order by the single dueAt field; completed tombstones have no dueAt.
+export const recoverAccountDeletions = onSchedule({
+  schedule: "every 5 minutes", timeoutSeconds: 540, memory: "512MiB",
+  secrets: ["OPENAI_API_KEY"], maxInstances: 1, concurrency: 1,
+}, async () => {
+  const due = await getFirestore().collection(DELETION_COLLECTION)
+    .where("dueAt", "<=", Timestamp.now()).orderBy("dueAt").limit(10).get();
+  const results = await Promise.allSettled([
+    Promise.all(due.docs.map((doc) => processAccountDeletion(doc.id))),
+    recoverWardrobeIndexing(),
+    recoverExpiredMediaLocks(), recoverItemMedia(), recoverRetiredMedia(), recoverMediaSweeps(), recoverMediaInventories(),
+    recoverStalledIngestion(),
+  ]);
+  if (results.some((result) => result.status === "rejected")) throw new Error("Background recovery incomplete; durable work remains queued.");
+});
+// Cross-service writes cannot be atomic. Retry deletion of the EXACT generation
+// of any upload that finalized after the fence, including old resumable uploads.
+export const removeDeletedAccountUpload = onObjectFinalized({ retry: true }, async (event) => {
+  const [root, uid] = event.data.name.split("/");
+  if (root !== "users" || !uid) return;
+  if (!(await deletionRef(uid).get()).exists) {
+    await removeRetiredUpload(event.data.bucket, event.data.name, event.data.generation);
+    await removeDeletedItemUpload(event.data.bucket, event.data.name, event.data.generation);
+    await queueMediaSweep(uid, event.data.name);
+    return;
+  }
+  await getStorage().bucket(event.data.bucket).file(event.data.name, { generation: event.data.generation })
+    .delete({ ignoreNotFound: true });
+});

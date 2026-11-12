@@ -315,6 +315,13 @@ function classifyMode(request: AuraStylingAgentRequest, text: string): {
   if (hasReference && /\b(more|another|again|this|that|those|same|similar)\b/.test(text)) {
     return { mode: "refine_outfit", confidence: 0.82, reason: "conversation reference follow-up" };
   }
+  if (stringArray(request.selectedItemIds).length && /\b(use|include|pair|match|combine|build)\b/.test(text)) {
+    return {
+      mode: hasReference ? "refine_outfit" : "generate_outfit",
+      confidence: 0.88,
+      reason: "styling request anchored to selected closet items",
+    };
+  }
   if (/\b(outfits?|wear|looks?|style|fits?|dress me)\b/.test(text)) {
     return { mode: "generate_outfit", confidence: 0.88, reason: "outfit generation language" };
   }

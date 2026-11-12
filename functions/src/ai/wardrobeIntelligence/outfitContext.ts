@@ -1,16 +1,13 @@
+import { retrieveHybridCandidates } from "./hybridRetrieval";
 import { getFirestore } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
-import { EMBEDDING_VECTOR_FIELD, outfitGenerationConfig } from "./config";
-import { createTextEmbedding } from "./embeddings";
+import { outfitGenerationConfig } from "./config";
 import {
-  VECTOR_DISTANCE_FIELD,
   buildWardrobeRetrievalResult,
   buildWardrobeRetrievalResults,
   rawVectorLimit,
-  type WardrobeVectorCandidate,
 } from "./retrieval";
 import type { WardrobeRetrievalFormality } from "./retrievalTypes";
-import type { ClosetItemDocument } from "./types";
 import { canonicalizeOutfitRole } from "./outfitRole";
 import {
   OUTFIT_ROLES,
@@ -269,38 +266,6 @@ export function buildOutfitRetrievalPlan(input: NormalizedOutfitGenerationInput 
   };
 }
 
-function distanceValue(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-async function vectorSearchCandidates(args: {
-  uid: string;
-  queryVector: number[];
-  limit: number;
-}): Promise<WardrobeVectorCandidate[]> {
-  const snap = await getFirestore()
-    .collection("users")
-    .doc(args.uid)
-    .collection("items")
-    .findNearest({
-      vectorField: EMBEDDING_VECTOR_FIELD,
-      queryVector: args.queryVector,
-      limit: args.limit,
-      distanceMeasure: "COSINE",
-      distanceResultField: VECTOR_DISTANCE_FIELD,
-    })
-    .get();
-  return snap.docs.map((doc) => {
-    const data = doc.data();
-    return {
-      itemId: doc.id,
-      item: { id: doc.id, ...data } as ClosetItemDocument,
-      distance: distanceValue(doc.get(VECTOR_DISTANCE_FIELD) ?? data[VECTOR_DISTANCE_FIELD]),
-    };
-  });
-}
-
 export type RetrieveOutfitContextDeps = {
   retrieveRoleCandidates?: (args: {
     uid: string;
@@ -420,13 +385,7 @@ async function defaultRetrieveRoleCandidates(args: {
   limit: number;
 }): Promise<OutfitCandidate[]> {
   const colors = args.plan.intent.categorySpecificConstraints[args.role] ?? [];
-  const vector = await createTextEmbedding(args.query);
-  const rawLimit = rawVectorLimit(args.limit);
-  const candidates = await vectorSearchCandidates({
-    uid: args.uid,
-    queryVector: vector,
-    limit: rawLimit,
-  });
+  const { candidates } = await retrieveHybridCandidates(args.uid, args.query, rawVectorLimit(args.limit));
   const results = buildWardrobeRetrievalResults({
     query: args.query,
     limit: args.limit,
@@ -437,7 +396,7 @@ async function defaultRetrieveRoleCandidates(args: {
     styleTags: [],
     colors,
     includeDiagnostics: false,
-  }, candidates);
+  }, candidates, { requireEmbedding: false });
 
   return results.flatMap((result) => retrievalResultToOutfitCandidate(result, args.role) ?? []);
 }

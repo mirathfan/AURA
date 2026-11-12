@@ -1,4 +1,5 @@
-import OpenAI from "openai";
+import { consentRequired, isAiConsentError } from "../../shared/aiConsent";
+import OpenAI from "../../shared/consentedOpenAI";
 import { HttpsError } from "firebase-functions/v2/https";
 import { requireOpenAiApiKey } from "../../shared/env";
 import {
@@ -29,6 +30,8 @@ type CreateTextEmbeddingOptions = {
 function defaultClient(): OpenAIEmbeddingClient {
   return new OpenAI({
     apiKey: requireOpenAiApiKey(),
+    maxRetries: 0, // Durable indexing owns retries; avoid nested SDK amplification.
+    timeout: 20_000,
   }) as OpenAIEmbeddingClient;
 }
 
@@ -87,6 +90,10 @@ export async function createTextEmbedding(
     }
   }
 
+  if (isAiConsentError(lastError)) throw consentRequired();
   if (lastError instanceof HttpsError) throw lastError;
-  throw new HttpsError("internal", "Could not generate wardrobe intelligence embedding.");
+  const status = Number((lastError as { status?: number })?.status);
+  throw new HttpsError("unavailable", "Could not generate wardrobe intelligence embedding.",
+    status >= 400 && status < 500 && ![408, 409, 429].includes(status)
+      ? { code: "EMBEDDING_CONFIGURATION" } : undefined);
 }

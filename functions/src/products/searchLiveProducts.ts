@@ -1,3 +1,4 @@
+import { assertAiConsent, setAiConsentUser } from "../shared/aiConsent";
 import { logger, setLogContext, tracedHandler } from "../shared/logger";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 
@@ -182,6 +183,8 @@ export const searchLiveProducts = onCall(
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
 
     const provider = envString("PRODUCT_SEARCH_PROVIDER", "serpapi").toLowerCase();
     const normalized = normalizeRequest(request.data);
@@ -197,7 +200,7 @@ export const searchLiveProducts = onCall(
     }
 
     const cacheKey = buildProductSearchCacheKey(normalized);
-    const cached = await getCachedProductSearch(cacheKey);
+    const cached = await getCachedProductSearch(cacheKey, uid);
     if (cached) {
       return {
         ok: true,
@@ -221,6 +224,7 @@ export const searchLiveProducts = onCall(
         }));
 
       await setCachedProductSearch({
+        uid,
         key: cacheKey,
         request: normalized,
         products: ranked,

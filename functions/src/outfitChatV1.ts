@@ -1,3 +1,6 @@
+import { setUserDocument } from "./shared/accountLifecycle";
+import { assertAiConsent, setAiConsentUser } from "./shared/aiConsent";
+import { consentedProviderFetch } from "./shared/aiConsent";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
@@ -335,7 +338,7 @@ async function parseChatAction(params: {
     assistantMemorySummary,
   };
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await consentedProviderFetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -427,6 +430,8 @@ export const outfitChatV1 = onCall(
     await assertFunctionRateLimit(uid, "outfitChat", RATE_LIMITS.outfitChat);
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
 
     const message = String(request.data?.message ?? "").trim().slice(0, 2000);
     const incomingThreadId = String(request.data?.threadId ?? "").trim().slice(0, 180) || null;
@@ -443,7 +448,7 @@ export const outfitChatV1 = onCall(
     const threadId = threadRef.id;
 
     if (!incomingThreadId) {
-      await threadRef.set({
+      await setUserDocument(threadRef, {
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
         title: message.slice(0, 80),
@@ -499,7 +504,7 @@ export const outfitChatV1 = onCall(
     const userMessageRef = threadRef.collection("messages").doc();
     const assistantMessageRef = threadRef.collection("messages").doc();
 
-    await userMessageRef.set({
+    await setUserDocument(userMessageRef, {
       role: "user",
       text: message,
       createdAt: FieldValue.serverTimestamp(),
@@ -645,7 +650,7 @@ export const outfitChatV1 = onCall(
         ? buildThreadMemorySummary([...recentMessages, {role: "user", text: message}])
         : undefined;
 
-    await assistantMessageRef.set({
+    await setUserDocument(assistantMessageRef, {
       role: "assistant",
       text: assistantText,
       createdAt: FieldValue.serverTimestamp(),
@@ -662,7 +667,7 @@ export const outfitChatV1 = onCall(
       },
     });
 
-    await threadRef.set({
+    await setUserDocument(threadRef, {
       updatedAt: FieldValue.serverTimestamp(),
       ...(incomingThreadId ? {} : {createdAt: FieldValue.serverTimestamp()}),
       title: message.slice(0, 80),

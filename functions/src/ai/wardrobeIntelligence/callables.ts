@@ -1,8 +1,12 @@
-import { FieldPath, getFirestore, type DocumentReference } from "firebase-admin/firestore";
+import { deleteItemAtomically } from "../../shared/itemLifecycle";
+import { enqueueIndexing } from "./indexingRecovery";
+import { assertAiConsent, setAiConsentUser } from "../../shared/aiConsent";
+import { FieldPath, getFirestore, type DocumentReference, type Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "../../shared/logger";
 import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
 import {
+  isAutoDeleteSafeAbandonedDraft,
   DRAFT_CLEANUP_CONFIRM,
   MAX_DRAFT_CLEANUP_RETURNED_ITEMS,
   buildBulkAbandonedDraftCleanupPlan,
@@ -33,10 +37,10 @@ const MAX_BACKFILL_LIMIT = 100;
 const MAX_BACKFILL_DEBUG_ITEMS = 50;
 const BACKFILL_ALL_BATCH_SIZE = 100;
 const MAX_BACKFILL_ALL_ITEMS = 300;
-const FIRESTORE_DELETE_BATCH_LIMIT = 400;
 
 type CleanupDocRecord = DraftCleanupRecord & {
   ref: DocumentReference;
+  version: Timestamp | undefined;
 };
 
 function requireAuthUid(uid: string | undefined): string {
@@ -48,7 +52,7 @@ function requireAuthUid(uid: string | undefined): string {
 
 function requireItemId(value: unknown): string {
   const itemId = String(value ?? "").trim();
-  if (!itemId) {
+  if (!itemId || itemId.includes("/")) {
     throw new HttpsError("invalid-argument", "A closet item ID is required.");
   }
   return itemId;
@@ -66,9 +70,7 @@ function nullableCursor(value: unknown): string | null {
 }
 
 function errorReason(error: unknown): string {
-  if (error instanceof HttpsError) return error.message;
-  if (error instanceof Error) return error.message;
-  return "Unknown error";
+  return error instanceof HttpsError ? error.code : "indexing_unavailable";
 }
 
 function itemName(item: ClosetItemDocument): string {
@@ -107,6 +109,7 @@ async function readDraftCleanupRecords(uid: string, limit: number): Promise<Clea
     itemId: docSnap.id,
     item: { id: docSnap.id, ...docSnap.data() } as ClosetItemDocument,
     ref: docSnap.ref,
+    version: docSnap.updateTime,
   }));
 }
 
@@ -130,6 +133,7 @@ async function rereadDraftCleanupRecords(records: CleanupDocRecord[]): Promise<{
     }
     freshRecords.push({
       ...record,
+      version: freshSnap.updateTime,
       item: { id: freshSnap.id, ...freshSnap.data() } as ClosetItemDocument,
     });
   }
@@ -137,16 +141,14 @@ async function rereadDraftCleanupRecords(records: CleanupDocRecord[]): Promise<{
   return { freshRecords, missingItems };
 }
 
-async function deleteCleanupRecords(records: CleanupDocRecord[]): Promise<void> {
-  const db = getFirestore();
-  for (let index = 0; index < records.length; index += FIRESTORE_DELETE_BATCH_LIMIT) {
-    const batch = db.batch();
-    const chunk = records.slice(index, index + FIRESTORE_DELETE_BATCH_LIMIT);
-    for (const record of chunk) {
-      batch.delete(record.ref);
-    }
-    await batch.commit();
+async function deleteCleanupRecords(records: CleanupDocRecord[], cutoffMs: number): Promise<string[]> {
+  const deleted: string[] = [];
+  for (const record of records) {
+    const uid = record.ref.path.split("/")[1];
+    if (await deleteItemAtomically(uid, record.itemId, (current) =>
+      Boolean(record.version && current.updateTime?.isEqual(record.version)) && isAutoDeleteSafeAbandonedDraft({ id: current.id, ...current.data() } as ClosetItemDocument, cutoffMs))) deleted.push(record.itemId);
   }
+  return deleted;
 }
 
 type BackfillBatchArgs = {
@@ -161,6 +163,7 @@ type BackfillBatchArgs = {
 type BackfillBatchResult = {
   processed: number;
   indexed: number;
+  queued: number;
   skipped: number;
   failed: number;
   indexedItems: BackfillItemEntry[];
@@ -190,6 +193,7 @@ async function processBackfillBatch(args: BackfillBatchArgs): Promise<BackfillBa
   const includeDebugItems = args.includeDebugItems !== false;
 
   let indexed = 0;
+  let queued = 0;
   let skipped = 0;
   let failed = 0;
   const indexedItems: BackfillItemEntry[] = [];
@@ -205,6 +209,13 @@ async function processBackfillBatch(args: BackfillBatchArgs): Promise<BackfillBa
       continue;
     }
     try {
+      if (!args.dryRun) {
+        const state = await enqueueIndexing(args.uid, doc.id, { retryTerminal: args.force });
+        if (["pending", "processing", "retryable_failure"].includes(state)) queued += 1;
+        else if (state === "terminal_failure") failed += 1;
+        else skipped += 1;
+        continue;
+      }
       const result = await indexClosetItemIntelligence({
         itemId: doc.id,
         item,
@@ -232,6 +243,7 @@ async function processBackfillBatch(args: BackfillBatchArgs): Promise<BackfillBa
   return {
     processed: docsToProcess.length,
     indexed,
+    queued,
     skipped,
     failed,
     indexedItems,
@@ -249,30 +261,13 @@ export const reindexClosetItem = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
-    await assertFunctionRateLimit(uid, "wardrobeIndexing", RATE_LIMITS.wardrobeIndexing);
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
+    await assertFunctionRateLimit(uid, "wardrobeBackfill", RATE_LIMITS.wardrobeBackfill);
     const itemId = requireItemId(request.data?.itemId);
-    const force = request.data?.force === true;
-    const ref = getFirestore().collection("users").doc(uid).collection("items").doc(itemId);
-    const snap = await ref.get();
-
-    if (!snap.exists) {
-      throw new HttpsError("not-found", "Closet item not found.");
-    }
-
-    const result = await indexClosetItemIntelligence({
-      itemId,
-      item: { id: itemId, ...snap.data() } as ClosetItemDocument,
-      ref,
-      force,
-    });
-
-    return {
-      itemId,
-      status: result.status,
-      reason: result.reason,
-      embeddingTextPreview: result.embeddingTextPreview,
-      metadataPreview: serializeMetadataPreview(result.aiMetadata),
-    };
+    const status = await enqueueIndexing(uid, itemId, { retryTerminal: request.data?.force === true });
+    if (status === "missing") throw new HttpsError("not-found", "Closet item not found.");
+    return { itemId, status, reason: "Durable indexing status; queued work is not completion." };
   }),
 );
 
@@ -281,6 +276,8 @@ export const backfillWardrobeIntelligence = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     await assertFunctionRateLimit(uid, "wardrobeBackfill", RATE_LIMITS.wardrobeBackfill);
     const limit = backfillLimit(request.data?.limit);
     const force = request.data?.force === true;
@@ -296,6 +293,8 @@ export const backfillWardrobeIntelligenceAll = onCall(
     const uid = requireAuthUid(request.auth?.uid);
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     await assertFunctionRateLimit(uid, "wardrobeBackfill", RATE_LIMITS.wardrobeBackfill);
     const force = request.data?.force === true;
     const dryRun = request.data?.dryRun === true;
@@ -303,6 +302,7 @@ export const backfillWardrobeIntelligenceAll = onCall(
     let cursor: string | null = null;
     let totalProcessed = 0;
     let totalIndexed = 0;
+    let totalQueued = 0;
     let totalSkipped = 0;
     let totalFailed = 0;
     let batchesExecuted = 0;
@@ -322,6 +322,7 @@ export const backfillWardrobeIntelligenceAll = onCall(
         batchesExecuted += 1;
         totalProcessed += batch.processed;
         totalIndexed += batch.indexed;
+        totalQueued += batch.queued;
         totalSkipped += batch.skipped;
         totalFailed += batch.failed;
         cursor = batch.nextCursor;
@@ -356,6 +357,7 @@ export const backfillWardrobeIntelligenceAll = onCall(
     return {
       totalProcessed,
       totalIndexed,
+      totalQueued,
       totalSkipped,
       totalFailed,
       batchesExecuted,
@@ -371,6 +373,7 @@ export const previewClosetItemIntelligence = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     const itemId = requireItemId(request.data?.itemId);
     const ref = getFirestore().collection("users").doc(uid).collection("items").doc(itemId);
     const snap = await ref.get();
@@ -395,6 +398,7 @@ export const auditClosetDraftItems = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     const limit = draftAuditLimit(request.data?.limit);
     const snap = await getFirestore()
       .collection("users")
@@ -425,6 +429,7 @@ export const previewAbandonedDraftCleanup = onCall(
     const uid = requireAuthUid(request.auth?.uid);
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
+    setAiConsentUser(uid);
     const cutoffDays = draftCleanupCutoffDays(request.data?.cutoffDays);
     const cutoffMs = cutoffTimestampForDays(cutoffDays);
     const limit = draftCleanupLimit(request.data?.limit);
@@ -454,6 +459,7 @@ export const bulkDeleteAbandonedDrafts = onCall(
     const uid = requireAuthUid(request.auth?.uid);
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
+    setAiConsentUser(uid);
     validateBulkAbandonedDraftCleanupConfirm(request.data?.confirm);
     const cutoffDays = draftCleanupCutoffDays(request.data?.cutoffDays);
     const cutoffMs = cutoffTimestampForDays(cutoffDays);
@@ -476,7 +482,7 @@ export const bulkDeleteAbandonedDrafts = onCall(
       confirm: request.data?.confirm,
     });
 
-    await deleteCleanupRecords(plan.deleteRecords as CleanupDocRecord[]);
+    const deletedIds = await deleteCleanupRecords(plan.deleteRecords as CleanupDocRecord[], cutoffMs);
 
     const skippedItems = [
       ...missingItems,
@@ -485,9 +491,9 @@ export const bulkDeleteAbandonedDrafts = onCall(
     const result: DraftCleanupBulkResult = {
       cutoffDays,
       totalChecked: initialRecords.length,
-      deletedCount: plan.deletedCount,
-      skippedCount: plan.skippedCount + missingItems.length,
-      deletedItems: plan.deletedItems,
+      deletedCount: deletedIds.length,
+      skippedCount: initialRecords.length - deletedIds.length,
+      deletedItems: plan.deletedItems.filter((item) => deletedIds.includes(item.itemId)),
       skippedItems,
     };
 
@@ -508,6 +514,7 @@ export const deleteDraftClosetItem = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     const itemId = requireItemId(request.data?.itemId);
     const ref = getFirestore().collection("users").doc(uid).collection("items").doc(itemId);
     const snap = await ref.get();
@@ -523,7 +530,12 @@ export const deleteDraftClosetItem = onCall(
       itemId,
       reason,
     });
-    await ref.delete();
+    const deleted = await deleteItemAtomically(uid, itemId, (current) => {
+      if ((!snap.updateTime || !current.updateTime?.isEqual(snap.updateTime))) return false;
+      validateDeleteDraftClosetItem({ id: itemId, ...current.data() } as ClosetItemDocument, request.data?.confirm);
+      return true;
+    });
+    if (!deleted) throw new HttpsError("failed-precondition", "Item changed. Review it again before deleting.");
     return {
       itemId,
       deleted: true,

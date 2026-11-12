@@ -1,3 +1,4 @@
+import { userWriteBatch } from "./accountLifecycle";
 import { FieldValue, Firestore } from "firebase-admin/firestore";
 import {
   ALLOWED_COLORS,
@@ -2025,7 +2026,7 @@ export async function persistGeneratedOutfits(params: {
   outfits: OutfitCandidate[];
 }): Promise<OutfitResult[]> {
   const {db, uid, intentText, intent, outfits} = params;
-  const batch = db.batch();
+  const batch = userWriteBatch(db, uid);
   const payload = outfits.map((outfit) => {
     const outfitRef = db.collection(`users/${uid}/outfits`).doc();
     batch.set(outfitRef, {

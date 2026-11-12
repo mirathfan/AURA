@@ -1,3 +1,5 @@
+import * as consent from "../../../shared/aiConsent";
+import * as styleMemory from "../styleMemory";
 import {
   handleDislikeAuraAgentOutfit,
   handleLogAuraAgentOutfitWear,
@@ -49,6 +51,21 @@ function outfitPayload() {
 }
 
 describe("agent action callables", () => {
+  it("restores a removed outfit instead of reporting an invisible duplicate", async () => {
+    const setSavedOutfit = jest.fn(async () => undefined);
+    const result = await handleSaveAuraAgentOutfit("uid", { outfit: outfitPayload() }, {
+      getSavedOutfit: async () => ({ active: false, deletedAt: 123 }),
+      setSavedOutfit,
+      setOutfitEvent: async () => undefined,
+      recordFeedback: async () => undefined,
+    });
+    expect(result).toMatchObject({ saved: true, alreadySaved: false });
+    expect(setSavedOutfit).toHaveBeenCalledWith("uid", result.savedOutfitId, expect.objectContaining({
+      active: true,
+      deletedAt: expect.anything(),
+      savedAtMs: expect.any(Number),
+    }));
+  });
   it("requires auth for save actions", async () => {
     await expect(handleSaveAuraAgentOutfit(undefined, {
       outfit: outfitPayload(),
@@ -291,4 +308,17 @@ describe("agent action callables", () => {
       selectedItemIds: ["shirt-1", "pants-1", "shoe-1"],
     });
   });
+});
+
+it("still saves an outfit when server consent is revoked, without embedding feedback", async () => {
+  const guard = jest.spyOn(consent, "assertAiConsent").mockRejectedValue(consent.consentRequired());
+  const feedback = jest.spyOn(styleMemory, "recordStyleMemoryFeedback");
+  const save = jest.fn(async () => undefined);
+  try {
+    await expect(handleSaveAuraAgentOutfit("uid", { outfit: outfitPayload() }, {
+      getSavedOutfit: async () => null, setSavedOutfit: save, setOutfitEvent: async () => undefined,
+    })).resolves.toMatchObject({ saved: true });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(feedback).not.toHaveBeenCalled();
+  } finally { guard.mockRestore(); feedback.mockRestore(); }
 });

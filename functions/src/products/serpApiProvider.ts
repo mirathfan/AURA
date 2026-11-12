@@ -1,3 +1,4 @@
+import { consentedProviderFetch } from "../shared/aiConsent";
 import { logger } from "../shared/logger";
 
 import {
@@ -29,7 +30,7 @@ async function fetchJson<T>(url: URL) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), SERPAPI_TIMEOUT_MS);
   try {
-    const response = await fetch(url.toString(), {
+    const response = await consentedProviderFetch(url.toString(), {
       method: "GET",
       signal: controller.signal,
     });

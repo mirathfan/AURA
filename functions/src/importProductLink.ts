@@ -1,7 +1,9 @@
+import { mutateCurrentIngestionItem } from "./shared/ingestionLifecycle";
+import { assertAiConsent, setAiConsentUser } from "./shared/aiConsent";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "./shared/logger";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
-import OpenAI from "openai";
+import { getFirestore, FieldValue, type DocumentSnapshot } from "firebase-admin/firestore";
+import OpenAI from "./shared/consentedOpenAI";
 
 import {
   ProductLinkError,
@@ -56,19 +58,12 @@ function codeForError(
 }
 
 async function markImportFailed(
-  uid: string,
-  itemId: string | null,
+  snapshot: DocumentSnapshot | undefined,
   message: string,
   failureCode: string | null,
 ) {
-  if (!itemId) return;
-  await getFirestore()
-    .collection("users")
-    .doc(uid)
-    .collection("items")
-    .doc(itemId)
-    .set(
-      {
+  if (!snapshot?.exists) return;
+  await mutateCurrentIngestionItem(snapshot, {
         draftState: "failed",
         itemLifecycleStatus: "failed",
         ingestionStatus: "failed",
@@ -78,9 +73,7 @@ async function markImportFailed(
           error: { message, code: failureCode },
         },
         updatedAt: Date.now(),
-      },
-      { merge: true }
-    );
+      });
 }
 
 export const importProductLink = onCall(
@@ -91,6 +84,8 @@ export const importProductLink = onCall(
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
 
     const url = String(request.data?.url ?? "").trim().slice(0, 2048);
     if (!url) {
@@ -98,6 +93,9 @@ export const importProductLink = onCall(
     }
     await assertFunctionRateLimit(uid, "productLink", RATE_LIMITS.productLink);
     const itemId = String(request.data?.itemId ?? "").trim() || null;
+    if (itemId && (itemId.includes("/") || itemId.length > 150)) throw new HttpsError("invalid-argument", "Invalid item.");
+    const expectedSnapshot = itemId ? await getFirestore().doc(`users/${uid}/items/${itemId}`).get() : undefined;
+    if (expectedSnapshot && !expectedSnapshot.exists) throw new HttpsError("not-found", "Item no longer exists.");
     const startedAt = Date.now();
     const featureFlagEnabled = isProductLinkExtractionV2Enabled();
     logProductLinkEvent("product_link_import_started", buildProductLinkLogMetadata({
@@ -124,6 +122,7 @@ export const importProductLink = onCall(
       const created = await createDraftItemFromProductLink({
         uid,
         itemId: itemId ?? undefined,
+        expectedSnapshot,
         prompt: "Quick add product link",
         extraction,
         useV2ClosetDraft: featureFlagEnabled,
@@ -183,7 +182,7 @@ export const importProductLink = onCall(
         code: error instanceof ProductLinkError ? error.code : null,
         error: message,
       });
-      await markImportFailed(uid, itemId, message, failureCode);
+      await markImportFailed(expectedSnapshot, message, failureCode);
       throw new HttpsError(codeForError(error), message, {
         failureCode,
       });

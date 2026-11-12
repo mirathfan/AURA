@@ -1,3 +1,4 @@
+import { setUserDocument } from "../shared/accountLifecycle";
 import { createHash } from "node:crypto";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
@@ -35,8 +36,8 @@ export function buildProductSearchCacheKey(request: NormalizedSearchRequest) {
   return createHash("sha256").update(stableJson(payload)).digest("hex");
 }
 
-export async function getCachedProductSearch(key: string) {
-  const snapshot = await getFirestore().collection("productSearchCache").doc(key).get();
+export async function getCachedProductSearch(key: string, uid: string) {
+  const snapshot = await getFirestore().collection(`users/${uid}/productSearchCache`).doc(key).get();
   if (!snapshot.exists) return null;
   const data = snapshot.data() as Partial<ProductSearchCacheDoc> | undefined;
   const expiresAt = Number(data?.expiresAt ?? 0);
@@ -48,6 +49,7 @@ export async function getCachedProductSearch(key: string) {
 }
 
 export async function setCachedProductSearch(params: {
+  uid: string;
   key: string;
   request: NormalizedSearchRequest;
   products: ProductOption[];
@@ -55,10 +57,7 @@ export async function setCachedProductSearch(params: {
 }) {
   const now = Date.now();
   const ttlMs = Math.max(1, params.ttlHours) * 60 * 60 * 1000;
-  await getFirestore()
-    .collection("productSearchCache")
-    .doc(params.key)
-    .set(
+  await setUserDocument(getFirestore().collection(`users/${params.uid}/productSearchCache`).doc(params.key),
       {
         key: params.key,
         query: params.request.query,

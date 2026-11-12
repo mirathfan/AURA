@@ -1,22 +1,19 @@
-import { getFirestore } from "firebase-admin/firestore";
+import { retrieveHybridCandidates } from "./hybridRetrieval";
+import { assertAiConsent, setAiConsentUser } from "../../shared/aiConsent";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "../../shared/logger";
 import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
 import { EMBEDDING_VECTOR_FIELD } from "./config";
-import { createTextEmbedding } from "./embeddings";
 import { safeRecordAuraMetricEvent } from "./metrics";
 import {
-  VECTOR_DISTANCE_FIELD,
   buildCategoryBuckets,
   buildRetrievalDiagnostics,
   buildWardrobeRetrievalResults,
   countReadyVectorCandidates,
   normalizeWardrobeRetrievalInput,
   rawVectorLimit,
-  type WardrobeVectorCandidate,
 } from "./retrieval";
 import { buildWardrobeRetrievalQueryText } from "./retrievalQuery";
-import type { ClosetItemDocument } from "./types";
 
 const LOG_PREFIX = "[AURA_WARDROBE_RETRIEVAL]";
 
@@ -25,11 +22,6 @@ function requireAuthUid(uid: string | undefined): string {
     throw new HttpsError("unauthenticated", "Please sign in first.");
   }
   return uid;
-}
-
-function distanceValue(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function vectorSearchError(error: unknown): HttpsError {
@@ -69,39 +61,14 @@ function categoryCounts(categoryBuckets: ReturnType<typeof buildCategoryBuckets>
   };
 }
 
-async function vectorSearchCandidates(args: {
-  uid: string;
-  queryVector: number[];
-  limit: number;
-}): Promise<WardrobeVectorCandidate[]> {
-  const collection = getFirestore()
-    .collection("users")
-    .doc(args.uid)
-    .collection("items");
-  const snap = await collection.findNearest({
-    vectorField: EMBEDDING_VECTOR_FIELD,
-    queryVector: args.queryVector,
-    limit: args.limit,
-    distanceMeasure: "COSINE",
-    distanceResultField: VECTOR_DISTANCE_FIELD,
-  }).get();
-
-  return snap.docs.map((doc) => {
-    const data = doc.data();
-    return {
-      itemId: doc.id,
-      item: { id: doc.id, ...data } as ClosetItemDocument,
-      distance: distanceValue(doc.get(VECTOR_DISTANCE_FIELD) ?? data[VECTOR_DISTANCE_FIELD]),
-    };
-  });
-}
-
 export const retrieveWardrobeContext = onCall(
   { secrets: ["OPENAI_API_KEY"], timeoutSeconds: 120 },
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     await assertFunctionRateLimit(uid, "wardrobeRetrieval", RATE_LIMITS.wardrobeRetrieval);
     const input = normalizeWardrobeRetrievalInput(request.data);
     const retrievalQueryText = buildWardrobeRetrievalQueryText(input);
@@ -117,15 +84,11 @@ export const retrieveWardrobeContext = onCall(
     });
 
     try {
-      const queryVector = await createTextEmbedding(retrievalQueryText);
-      const candidates: WardrobeVectorCandidate[] = await vectorSearchCandidates({
-        uid,
-        queryVector,
-        limit: vectorLimit,
-      });
+      const { candidates, embeddingDimensions } = await retrieveHybridCandidates(uid, retrievalQueryText, vectorLimit);
       const allFilteredResults = buildWardrobeRetrievalResults(
         { ...input, limit: candidates.length || input.limit },
         candidates,
+        { requireEmbedding: false },
       );
       const results = allFilteredResults.slice(0, input.limit);
       const categoryBuckets = buildCategoryBuckets(results);
@@ -144,7 +107,7 @@ export const retrieveWardrobeContext = onCall(
               readyResultCount: countReadyVectorCandidates(candidates),
               filteredResultCount: allFilteredResults.length,
               returnedResultCount: results.length,
-              embeddingDimensions: queryVector.length,
+              embeddingDimensions,
             }),
           }
           : {}),

@@ -1,8 +1,9 @@
+import { assertAiConsent, setAiConsentUser } from "./shared/aiConsent";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import { HttpsError, onRequest } from "firebase-functions/v2/https";
-import OpenAI from "openai";
+import OpenAI from "./shared/consentedOpenAI";
 
 import { AURA_INSTRUCTIONS, AURA_STREAM_INSTRUCTIONS } from "./shared/auraPrompt";
 import {
@@ -1132,6 +1133,8 @@ export const askAuraStream = onRequest(
       });
       const decodedToken = await getAuth().verifyIdToken(idToken);
       const uid = decodedToken.uid;
+      setAiConsentUser(uid);
+      await assertAiConsent(uid);
       await assertFunctionRateLimit(uid, "auraChat", RATE_LIMITS.auraChat);
       const uidHash = redactUid(uid);
       setLogContext({ uidHash });

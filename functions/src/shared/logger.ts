@@ -1,3 +1,4 @@
+import { runWithAiConsentScope } from "./aiConsent";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
@@ -53,9 +54,9 @@ export function setLogContext(context: LogContext) {
 export function tracedHandler(handler: (...args: any[]) => any) {
   return (...args: any[]) => {
     const traceId = randomUUID().slice(0, 8);
-    return logContext.run({ traceId }, () => {
+    return runWithAiConsentScope(() => logContext.run({ traceId }, () => {
       logger.info("request started");
       return handler(...args);
-    });
+    }));
   };
 }

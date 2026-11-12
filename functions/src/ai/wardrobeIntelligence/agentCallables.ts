@@ -1,3 +1,4 @@
+import { assertAiConsent, setAiConsentUser } from "../../shared/aiConsent";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "../../shared/logger";
 import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
@@ -148,6 +149,8 @@ export const runAuraStylingAgent = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     await assertFunctionRateLimit(uid, "auraChat", RATE_LIMITS.auraChat);
     logger.info(`${LOG_PREFIX} started`, { uidHash: redactUid(uid) });
     const normalized = normalizeRequest(request.data);

@@ -1,3 +1,4 @@
+import { assertAiConsent, setAiConsentUser } from "../../shared/aiConsent";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { setLogContext, tracedHandler } from "../../shared/logger";
 import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
@@ -146,6 +147,8 @@ export const recordOutfitFeedback = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handleRecordOutfitFeedback(uid, request.data);
   }),
@@ -156,6 +159,8 @@ export const retrieveStyleMemoryContext = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handleRetrieveStyleMemoryContext(uid, request.data);
   }),
@@ -166,6 +171,7 @@ export const getStyleProfile = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     return handleGetStyleProfile(uid);
   }),
 );
@@ -175,6 +181,7 @@ export const rebuildStyleProfileFromMemories = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     return handleRebuildStyleProfileFromMemories(uid, request.data);
   }),
 );
@@ -184,6 +191,7 @@ export const listStyleMemories = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     return handleListStyleMemories(uid, request.data);
   }),
 );
@@ -193,6 +201,7 @@ export const deleteStyleMemory = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     return handleDeleteStyleMemory(uid, request.data);
   }),
 );
@@ -202,6 +211,7 @@ export const softDeleteAllStyleMemories = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     return handleSoftDeleteAllStyleMemories(uid, request.data);
   }),
 );

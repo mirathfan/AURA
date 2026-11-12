@@ -1,56 +1,16 @@
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
-import { logger, setLogContext, tracedHandler } from "../../shared/logger";
-import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
+import { isAccountDeleting } from "../../shared/accountLifecycle";
 import { CLOSET_ITEM_DOCUMENT_PATH } from "./config";
-import { indexClosetItemIntelligence } from "./indexClosetItem";
-import {
-  isIndexableClosetItemState,
-  shouldSkipIntelligenceIndexing,
-} from "./skip";
-import type { ClosetItemDocument } from "./types";
-
-function errorReason(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return "Unknown error";
-}
+import { enqueueIndexing } from "./indexingRecovery";
+import { shouldSkipIntelligenceIndexing } from "./skip";
 
 export const onClosetItemWriteIndexIntelligence = onDocumentWritten(
-  {
-    document: CLOSET_ITEM_DOCUMENT_PATH,
-    secrets: ["OPENAI_API_KEY"],
-    timeoutSeconds: 180,
+  { document: CLOSET_ITEM_DOCUMENT_PATH, retry: true, timeoutSeconds: 60 },
+  async (event) => {
+    // Generated writes cannot create an event loop. Other events reconcile the
+    // live document, never embed the stale event snapshot.
+    if (event.data?.after.exists && shouldSkipIntelligenceIndexing(event.data.before.data(), event.data.after.data())) return;
+    try { await enqueueIndexing(event.params.uid, event.params.itemId); }
+    catch (error) { if (!isAccountDeleting(error)) throw error; }
   },
-  tracedHandler(async (event) => {
-    const uid = String(event.params.uid ?? "");
-    const itemId = String(event.params.itemId ?? "");
-    setLogContext({ uidHash: redactUid(uid) });
-    const before = event.data?.before.data() as ClosetItemDocument | undefined;
-    const after = event.data?.after.data() as ClosetItemDocument | undefined;
-
-    if (!after) return;
-    if (shouldSkipIntelligenceIndexing(before, after)) return;
-    if (!isIndexableClosetItemState(after)) {
-      logger.info("[WARDROBE_INTELLIGENCE] skipping non-indexable closet item state", { itemId });
-      return;
-    }
-
-    try {
-      await assertFunctionRateLimit(uid, "wardrobeIndexing", RATE_LIMITS.wardrobeIndexing);
-      const result = await indexClosetItemIntelligence({
-        itemId,
-        item: { id: itemId, ...after },
-        ref: event.data?.after.ref,
-      });
-      logger.info("[WARDROBE_INTELLIGENCE] closet item indexing complete", {
-        itemId,
-        status: result.status,
-        reason: result.reason ?? null,
-      });
-    } catch (error) {
-      logger.error("[WARDROBE_INTELLIGENCE] closet item indexing failed", {
-        itemId,
-        reason: errorReason(error),
-      });
-    }
-  }),
 );

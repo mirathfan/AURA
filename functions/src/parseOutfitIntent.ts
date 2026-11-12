@@ -1,3 +1,4 @@
+import { consentedProviderFetch } from "./shared/aiConsent";
 export type OutfitIntent = {
   occasion?: string;
   vibe?: string;
@@ -88,7 +89,7 @@ export async function parseOutfitIntentFromPrompt(prompt: string): Promise<Outfi
   }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await consentedProviderFetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

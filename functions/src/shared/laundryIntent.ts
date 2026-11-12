@@ -1,3 +1,4 @@
+import { updateUserDocument } from "./accountLifecycle";
 import { FieldValue, Firestore } from "firebase-admin/firestore";
 
 export type LaundryStatus = "clean" | "needs_wash" | "in_laundry";
@@ -163,7 +164,7 @@ export async function handleLaundryIntent(params: {
     return confirmationResponse(targetStatus, matches, `I found ${matches.length === 1 ? "one possible match" : `${Math.min(matches.length, 6)} possible matches`}. Which one should be ${label}?`);
   }
 
-  await params.db.collection("users").doc(params.uid).collection("items").doc(best.item.id).update({
+  await updateUserDocument(params.db.collection("users").doc(params.uid).collection("items").doc(best.item.id), {
     status: legacyStatus(targetStatus),
     laundryStatus: targetStatus,
     laundryUpdatedAt: FieldValue.serverTimestamp(),

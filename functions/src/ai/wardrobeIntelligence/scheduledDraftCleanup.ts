@@ -1,4 +1,5 @@
-import { FieldPath, getFirestore, type WriteBatch } from "firebase-admin/firestore";
+import { deleteItemAtomically } from "../../shared/itemLifecycle";
+import { FieldPath, getFirestore} from "firebase-admin/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger, tracedHandler } from "../../shared/logger";
 import { redactUid } from "../../shared/rateLimit";
@@ -13,12 +14,7 @@ import type { ClosetItemDocument } from "./types";
 const SCHEDULED_DRAFT_CLEANUP_DELETE_CAP = 1000;
 const USER_BATCH_SIZE = 100;
 const USER_DRAFT_SCAN_LIMIT = 100;
-const FIRESTORE_DELETE_BATCH_LIMIT = 400;
 const MAX_SCHEDULED_USERS_PER_RUN = 500;
-
-async function commitBatch(batch: WriteBatch, pendingWrites: number) {
-  if (pendingWrites > 0) await batch.commit();
-}
 
 export const cleanupAbandonedDraftClosetItems = onSchedule(
   {
@@ -75,8 +71,6 @@ export const cleanupAbandonedDraftClosetItems = onSchedule(
         let userChecked = 0;
         let userDeleted = 0;
         let userSkipped = 0;
-        let batch = db.batch();
-        let pendingWrites = 0;
 
         for (const itemDoc of itemsSnap.docs) {
           if (totalDeleted >= SCHEDULED_DRAFT_CLEANUP_DELETE_CAP) break;
@@ -93,16 +87,12 @@ export const cleanupAbandonedDraftClosetItems = onSchedule(
             continue;
           }
 
-          batch.delete(itemDoc.ref);
-          pendingWrites += 1;
+          const deleted = await deleteItemAtomically(userDoc.id, itemDoc.id, (current) =>
+            Boolean(freshSnap.updateTime && current.updateTime?.isEqual(freshSnap.updateTime)) &&
+            isAutoDeleteSafeAbandonedDraft({ id: current.id, ...current.data() } as ClosetItemDocument, cutoffMs));
+          if (!deleted) { userSkipped += 1; totalSkipped += 1; continue; }
           userDeleted += 1;
           totalDeleted += 1;
-
-          if (pendingWrites >= FIRESTORE_DELETE_BATCH_LIMIT) {
-            await commitBatch(batch, pendingWrites);
-            batch = db.batch();
-            pendingWrites = 0;
-          }
 
           logger.info("[AURA_DRAFT_CLEANUP] deleted abandoned draft", {
             uidHash: redactUid(userDoc.id),
@@ -111,7 +101,6 @@ export const cleanupAbandonedDraftClosetItems = onSchedule(
           });
         }
 
-        await commitBatch(batch, pendingWrites);
 
         logger.info("[AURA_DRAFT_CLEANUP] user summary", {
           uidHash: redactUid(userDoc.id),

@@ -14,6 +14,26 @@ const previousOutfit = {
 };
 
 describe("classifyAuraStylingAgentIntent", () => {
+  it("routes an anchored use request to structured outfit generation", () => {
+    const intent = classifyAuraStylingAgentIntent({
+      query: "Use my black cargos", selectedItemIds: ["cargo-1"],
+    });
+    expect(intent.mode).toBe("generate_outfit");
+    expect(intent.constraints.selectedItemIds).toEqual(["cargo-1"]);
+  });
+
+  it("routes anchored follow-ups to refinement while preserving explanation requests", () => {
+    expect(classifyAuraStylingAgentIntent({
+      query: "Use my black cargos", selectedItemIds: ["cargo-1"], previousOutfit,
+    }).mode).toBe("refine_outfit");
+    expect(classifyAuraStylingAgentIntent({
+      query: "Why use my black cargos?", selectedItemIds: ["cargo-1"], previousOutfit,
+    }).mode).toBe("explain_outfit");
+  });
+
+  it("does not treat arbitrary use requests as selected-item styling", () => {
+    expect(classifyAuraStylingAgentIntent({ query: "Use my location" }).mode).toBe("unknown");
+  });
   it("extracts requested outfit counts from query text", () => {
     expect(extractRequestedOutfitCount("give me 3 outfits for office")).toBe(3);
     expect(extractRequestedOutfitCount("give me 3 more")).toBe(3);

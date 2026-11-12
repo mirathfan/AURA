@@ -1,6 +1,7 @@
+import { assertAiConsent, setAiConsentUser } from "./shared/aiConsent";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "./shared/logger";
-import OpenAI from "openai";
+import OpenAI from "./shared/consentedOpenAI";
 
 import {
   BLOCKED_STORE_MESSAGE,
@@ -277,6 +278,8 @@ const productLinkPreviewHandler = tracedHandler(async (request) => {
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
 
     const url = String(request.data?.url ?? "").trim().slice(0, 2048);
     if (!url) {

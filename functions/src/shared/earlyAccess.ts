@@ -1,3 +1,6 @@
+import { assertActiveInTransaction } from "./accountLifecycle";
+import { setUserDocument } from "./accountLifecycle";
+import { BETA_AI_FEATURES } from "../../../shared/aiConsent";
 import { createHash } from "node:crypto";
 
 import { FieldValue, Timestamp, getFirestore } from "firebase-admin/firestore";
@@ -70,11 +73,6 @@ function normalizeBetaRole(value: unknown): "standard" | "power" {
   return value === "power" ? "power" : "standard";
 }
 
-function featureEnabled(data: Record<string, unknown>, featureKey: EarlyAccessFeatureKey) {
-  const access = data.featureAccess;
-  if (!access || typeof access !== "object") return false;
-  return (access as Record<string, unknown>)[featureKey] === true;
-}
 
 function numericField(data: Record<string, unknown>, field: string) {
   const value = Number(data[field] ?? 0);
@@ -108,8 +106,8 @@ function featureStateFromData(params: {
   periodKey: string;
 }) {
   const betaRole = normalizeBetaRole(params.userData.betaRole);
-  const enabled = featureEnabled(params.userData, params.featureKey);
-  const allowed = betaRole === "power" && enabled;
+  const enabled = BETA_AI_FEATURES[params.featureKey];
+  const allowed = enabled;
   const limit = FEATURE_LIMITS[params.featureKey];
   const usageField = FEATURE_USAGE_FIELDS[params.featureKey];
   const used = params.usageData.periodKey === params.periodKey
@@ -161,6 +159,7 @@ export async function checkAndConsumeEarlyAccessUse(
   const normalizedRunKey = safeRunKey(options.runKey);
 
   return db.runTransaction(async (transaction) => {
+    await assertActiveInTransaction(transaction, uid);
     const [userSnap, usageSnap] = await Promise.all([
       transaction.get(userRef),
       transaction.get(usageRef),
@@ -266,19 +265,15 @@ export async function setCachedEarlyAccessResult(
 ) {
   if (!imageHash) return;
   const db = getFirestore();
-  await db
+  await setUserDocument(db
     .collection("users")
     .doc(uid)
     .collection("earlyAccessCache")
-    .doc(cacheDocId(featureKey, imageHash, modelVersion))
-    .set(
-      {
+    .doc(cacheDocId(featureKey, imageHash, modelVersion)), {
         featureKey,
         imageHash,
         modelVersion,
         result: stripUndefined(result),
         updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+      }, { merge: true });
 }

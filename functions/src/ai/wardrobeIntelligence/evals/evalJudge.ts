@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI from "../../../shared/consentedOpenAI";
 import { requireOpenAiApiKey } from "../../../shared/env";
 import type { ValidatedOutfit } from "../outfitTypes";
 import type { AuraEvalCase, AuraJudgeResult } from "./evalTypes";

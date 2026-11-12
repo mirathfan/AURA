@@ -1,3 +1,5 @@
+import { saveUserFile } from "./shared/accountStorage";
+import { assertAiConsent, setAiConsentUser } from "./shared/aiConsent";
 import { randomUUID } from "node:crypto";
 
 import { getApps, initializeApp } from "firebase-admin/app";
@@ -5,7 +7,8 @@ import { getStorage } from "firebase-admin/storage";
 import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { removeBackground } from "@imgly/background-removal-node";
-import OpenAI, { toFile } from "openai";
+import OpenAI from "./shared/consentedOpenAI";
+import { toFile } from "openai";
 import sharp from "sharp";
 
 import { requireOpenAiApiKey } from "./shared/env";
@@ -241,7 +244,7 @@ const OUTFIT_LAYOUT_MODEL_VERSION = `outfit-layout:${DETECTION_MODEL}:${IMAGE_MO
 const MAX_SOURCE_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_DETECTED_ITEMS = 6;
 const FAST_EXTRACTION_MAX_ITEMS = 4;
-const MAX_AUTO_POLISHED_CORE_ITEMS = 4;
+const MAX_AUTO_POLISHED_CORE_ITEMS = 0; // Beta 1: extraction is available, automatic Polish is not.
 const MAX_RAW_DETECTIONS = 10;
 const MAX_CROP_DIMENSION = 1400;
 const MIN_ABSOLUTE_CONFIDENCE = 0.32;
@@ -1051,7 +1054,7 @@ async function createReconstructedLayout(params: {
     throw new Error("Image model returned no reconstructed layout.");
   }
   const bytes = Buffer.from(b64, "base64");
-  const storagePath = `users/${params.uid}/outfitExtraction/${params.traceId}/reconstructed-layout.jpg`;
+  const storagePath = `users/${params.uid}/outfitExtraction/${params.traceId}/${randomUUID()}/reconstructed-layout.jpg`;
   const url = await uploadImageAndGetUrl(storagePath, bytes, "image/jpeg");
   logOutfitLayout({
     traceId: params.traceId,
@@ -1907,7 +1910,7 @@ async function uploadImageAndGetUrl(
 ): Promise<string> {
   const bucket = getStorage().bucket();
   const token = randomUUID();
-  await bucket.file(path).save(bytes, {
+  await saveUserFile(bucket.file(path), bytes, {
     metadata: {
       contentType,
       metadata: {
@@ -2020,7 +2023,7 @@ async function processDetectedItem(params: {
   autoPolishBudgetAvailable: boolean;
 }) {
   const { client, uid, traceId, input, item } = params;
-  const storageBase = `users/${uid}/outfitExtraction/${traceId}/${item.tempId}`;
+  const storageBase = `users/${uid}/outfitExtraction/${traceId}/${randomUUID()}/${item.tempId}`;
   const cropResult = await cropGarmentImage({
     inputBytes: input.bytes,
     item,
@@ -2920,7 +2923,7 @@ async function processLayoutItem(params: {
   layoutItem: LocatedLayoutItem | null;
 }) {
   const sourceItem = applyLayoutMetadata(params.sourceItem, params.layoutItem);
-  const storageBase = `users/${params.uid}/outfitExtraction/${params.traceId}/${sourceItem.tempId}`;
+  const storageBase = `users/${params.uid}/outfitExtraction/${params.traceId}/${randomUUID()}/${sourceItem.tempId}`;
   const originalCropResult = await cropGarmentImage({
     inputBytes: params.sourceInput.bytes,
     item: sourceItem,
@@ -3324,6 +3327,8 @@ export const extractOutfitItems = onCall(
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     const featureState = await getEarlyAccessFeatureState(uid, "outfitExtraction");
     if (!featureState.allowed) {
       throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.featureNotAvailable.message, {
@@ -3541,6 +3546,8 @@ export const reconstructOutfitLayout = onCall(
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     const featureState = await getEarlyAccessFeatureState(uid, "outfitExtraction");
     if (!featureState.allowed) {
       throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.featureNotAvailable.message, {
@@ -3798,6 +3805,8 @@ export const polishExtractedAccessory = onCall(
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     const featureState = await getEarlyAccessFeatureState(uid, "aiPolish");
     if (!featureState.allowed) {
       throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.featureNotAvailable.message, {
@@ -3903,7 +3912,7 @@ export const polishExtractedAccessory = onCall(
         bytes: cropInput.bytes,
         conservative: true,
       });
-      const storageBase = `users/${uid}/outfitExtraction/${traceId}/${itemTempId}`;
+      const storageBase = `users/${uid}/outfitExtraction/${traceId}/${randomUUID()}/${itemTempId}`;
       const refinedStoragePath = `${storageBase}.accessory-refined.jpg`;
       const refinedImageUrl = await uploadImageAndGetUrl(
         refinedStoragePath,

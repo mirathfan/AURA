@@ -10,6 +10,7 @@ import {
 
 type DocRef = {
   path: string;
+  firestore: typeof firestore;
   collection: (name: string) => CollectionRef;
   get: () => Promise<{ data: () => Record<string, unknown> | undefined }>;
   set: (data: Record<string, unknown>, options?: { merge?: boolean }) => Promise<void>;
@@ -31,7 +32,7 @@ function collectionRef(path: string): CollectionRef {
 
 function docRef(path: string): DocRef {
   return {
-    path,
+    path, firestore,
     collection: (name: string) => collectionRef(`${path}/${name}`),
     get: jest.fn(async () => ({
       data: () => store.get(path),
@@ -43,11 +44,12 @@ function docRef(path: string): DocRef {
 }
 
 const firestore = {
+  doc: docRef,
   collection: (name: string) => collectionRef(name),
   runTransaction: jest.fn(async <T>(callback: (transaction: unknown) => Promise<T>) => {
     const transaction = {
       get: jest.fn(async (ref: DocRef) => ({
-        data: () => store.get(ref.path),
+        data: () => store.get(ref.path), get: (key: string) => store.get(ref.path)?.[key], exists: store.has(ref.path),
       })),
       set: jest.fn((ref: DocRef, data: Record<string, unknown>, options?: { merge?: boolean }) => {
         store.set(ref.path, options?.merge ? { ...(store.get(ref.path) ?? {}), ...data } : data);
@@ -134,22 +136,10 @@ describe("early access feature gates", () => {
     expect(store.get("users/standard/usage/earlyAccess")).toBeUndefined();
   });
 
-  it("lets enabled users run AI Polish up to 3 times", async () => {
-    seed("users/polish", {
-      betaRole: "power",
-      featureAccess: { aiPolish: true },
-    });
-
+  it("keeps Polish disabled even for previously enabled power accounts", async () => {
+    seed("users/polish", { betaRole: "power", featureAccess: { aiPolish: true } });
     await expect(checkAndConsumeEarlyAccessUse("polish", "aiPolish", { runKey: "one" }))
-      .resolves.toMatchObject({ used: 1, remaining: 2 });
-    await expect(checkAndConsumeEarlyAccessUse("polish", "aiPolish", { runKey: "two" }))
-      .resolves.toMatchObject({ used: 2, remaining: 1 });
-    await expect(checkAndConsumeEarlyAccessUse("polish", "aiPolish", { runKey: "three" }))
-      .resolves.toMatchObject({ used: 3, remaining: 0 });
-
-    await expect(
-      checkAndConsumeEarlyAccessUse("polish", "aiPolish", { runKey: "four" }),
-    ).rejects.toBeInstanceOf(HttpsError);
+      .rejects.toMatchObject({ details: { code: "FEATURE_NOT_AVAILABLE" } });
   });
 
   it("lets enabled users run Outfit Extraction up to 2 times", async () => {
@@ -182,39 +172,11 @@ describe("early access feature gates", () => {
     });
   });
 
-  it("returns cached results without consuming another use", async () => {
-    seed("users/cached", {
-      betaRole: "power",
-      featureAccess: { aiPolish: true },
-    });
-    seed("users/cached/usage/earlyAccess", {
-      periodKey: "2026-06",
-      aiPolishUsed: 2,
-    });
-    await setCachedEarlyAccessResult("cached", "aiPolish", "same-image", "model-v1", {
-      ok: true,
-      cached: true,
-    });
-
-    await expect(cachedOrConsume({
-      uid: "cached",
-      imageHash: "same-image",
-      modelVersion: "model-v1",
-    })).resolves.toEqual({ ok: true, cached: true });
-    expect(store.get("users/cached/usage/earlyAccess")?.aiPolishUsed).toBe(2);
-  });
-
-  it("blocks direct backend calls when featureAccess is missing", async () => {
-    seed("users/direct", {
-      betaRole: "power",
-    });
-
-    await expect(
-      checkAndConsumeEarlyAccessUse("direct", "outfitExtraction", { runKey: "direct-call" }),
-    ).rejects.toMatchObject({
-      code: "failed-precondition",
-      details: { code: "FEATURE_NOT_AVAILABLE" },
-    });
+  it("makes core extraction available without privileged beta flags", async () => {
+    await expect(getEarlyAccessFeatureState("new-user", "outfitExtraction"))
+      .resolves.toMatchObject({ allowed: true, remaining: 2 });
+    await expect(checkAndConsumeEarlyAccessUse("new-user", "outfitExtraction", { runKey: "one" }))
+      .resolves.toMatchObject({ used: 1, remaining: 1 });
   });
 
   it("does not let cached results bypass feature availability", async () => {

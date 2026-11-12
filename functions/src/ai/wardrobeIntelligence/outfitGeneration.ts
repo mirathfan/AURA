@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI from "../../shared/consentedOpenAI";
 import { HttpsError } from "firebase-functions/v2/https";
 import { requireOpenAiApiKey } from "../../shared/env";
 import { outfitGenerationConfig } from "./config";

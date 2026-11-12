@@ -1,3 +1,10 @@
+import { retireUnreferencedMedia, removeRetiredUpload } from "./shared/mediaSafety";
+import { saveUserFile } from "./shared/accountStorage";
+import { isAccountDeleting } from "./shared/accountLifecycle";
+import { claimIngestion, IngestionStopped, mutateCurrentIngestionItem, withIngestionItem, type IngestionLease } from "./shared/ingestionLifecycle";
+import { pauseIngestionForConsent } from "./shared/pausedIngestion";
+import { assertAiConsent, isAiConsentError, setAiConsentUser } from "./shared/aiConsent";
+import { consentedProviderFetch } from "./shared/aiConsent";
 import { createHash, randomUUID } from "node:crypto";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
@@ -543,14 +550,6 @@ function extractStoragePathFromUrl(url: string): string | null {
 
 function isUserOwnedStoragePath(uid: string, storagePath: string | null) {
   return !!storagePath && storagePath.startsWith(`users/${uid}/`);
-}
-
-function extractDownloadTokenFromUrl(url: string): string | null {
-  try {
-    return new URL(url).searchParams.get("token");
-  } catch {
-    return null;
-  }
 }
 
 function hasClientCleanedImage(item: ItemDoc): boolean {
@@ -1134,16 +1133,6 @@ async function applyServerBackgroundRemoval(params: {
       output: { format: "image/png", quality: 0.92 },
     });
     const pngBytes = await blobToBuffer(result);
-    const token = extractDownloadTokenFromUrl(photoUrl) ?? randomUUID();
-    await getStorage().bucket().file(storagePath).save(pngBytes, {
-      metadata: {
-        contentType: "image/png",
-        metadata: {
-          firebaseStorageDownloadTokens: token,
-        },
-      },
-      resumable: false,
-    });
     logger.info("[BgRemoval] Server-side removal applied", {
       uidHash: redactUid(uid),
       itemId,
@@ -1235,13 +1224,15 @@ function clampBbox(
 async function uploadImageAndGetUrl(
   path: string,
   bytes: Buffer,
+  lease: IngestionLease,
   contentType = "image/jpeg",
 ): Promise<string> {
   const bucket = getStorage().bucket();
   const bucketName = bucket.name;
   const file = bucket.file(path);
   const token = randomUUID();
-  await file.save(bytes, {
+  await withIngestionItem(lease);
+  await saveUserFile(file, bytes, {
     metadata: {
       contentType,
       metadata: {
@@ -1250,6 +1241,13 @@ async function uploadImageAndGetUrl(
     },
     resumable: false,
   });
+  try { await withIngestionItem(lease); } catch (error) {
+    // This path is unique to the run. Recovery retains a marker if this cleanup
+    // itself fails, or the process is killed before reaching this point.
+    await retireUnreferencedMedia(lease.uid, [file.name]);
+    if (file.metadata.generation) await removeRetiredUpload(file.bucket.name, file.name, file.metadata.generation);
+    throw error;
+  }
   return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
 }
 
@@ -1484,7 +1482,7 @@ async function extractWithOpenAI(photoUrls: string[]): Promise<RawExtraction> {
     detail: "high",
   });
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await consentedProviderFetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1595,7 +1593,10 @@ async function extractWithOpenAI(photoUrls: string[]): Promise<RawExtraction> {
 
 export const ingestItemFromPhotos = onDocumentWritten(
   {
+    // Transient media-maintenance contention before a claim must be redelivered.
+    // Current-document/lease checks make duplicate events safe.
     document: "users/{uid}/items/{itemId}",
+    retry: true,
     secrets: ["OPENAI_API_KEY"],
     memory: "1GiB",
     timeoutSeconds: 240,
@@ -1605,9 +1606,21 @@ export const ingestItemFromPhotos = onDocumentWritten(
     const itemId = String(event.params.itemId ?? "");
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
+    setAiConsentUser(uid);
     const before = event.data?.before.data() as ItemDoc | undefined;
-    const after = event.data?.after.data() as ItemDoc | undefined;
-    if (!after) return;
+    if (!event.data?.after.exists) return;
+    const ref = getFirestore().doc(`users/${uid}/items/${itemId}`);
+    const initialSnapshot = await ref.get();
+    if (!initialSnapshot.exists || (event.data.after.createTime && !initialSnapshot.createTime?.isEqual(event.data.after.createTime))) return;
+    const after = initialSnapshot.data() as ItemDoc;
+    // Never dispatch an old queued event using a remembered client decision.
+    try { await assertAiConsent(uid); }
+    catch (error) {
+      if (isAccountDeleting(error)) return;
+      if (!isAiConsentError(error)) throw error;
+      await pauseIngestionForConsent(uid, itemId);
+      return;
+    }
 
     const rawPhotoUrls = extractPhotoUrls(after);
     const rawSourceUrls = extractIngestionSourceUrls(after);
@@ -1706,10 +1719,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
     }
     if (!hasPhoto) {
       if (rawPhotoUrls.length > 0) {
-        await getFirestore()
-          .doc(`users/${uid}/items/${itemId}`)
-          .set(
-            {
+        await mutateCurrentIngestionItem(initialSnapshot, {
               ...(after.isDraft === true ? { draftState: "failed" } : {}),
               itemLifecycleStatus: "failed",
               ingestionStatus: "failed",
@@ -1726,9 +1736,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
                 },
               },
               updatedAt: Date.now(),
-            },
-            { merge: true },
-          );
+            });
       }
       logger.info("[INGEST_VALIDATE] skipping no photo URLs", {
         uidHash,
@@ -1805,7 +1813,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
 
     const explicitRetryRequested =
       status === "pending" &&
-      beforeStatus === "failed" &&
+      ["failed", "consent_required"].includes(beforeStatus) &&
       alreadyProcessedCurrentSource;
 
     const shouldRun =
@@ -1870,9 +1878,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
       return;
     }
 
-    const db = getFirestore();
-    const ref = db.doc(`users/${uid}/items/${itemId}`);
     const latestSnapshot = await ref.get();
+    if (!latestSnapshot.exists || (!initialSnapshot.updateTime || !latestSnapshot.updateTime?.isEqual(initialSnapshot.updateTime))) return;
     const latestData = latestSnapshot.data() as ItemDoc | undefined;
     const latestStatus = getIngestionStatus(latestData);
     const latestStaleProcessingRetry = isStaleProcessingStatus(latestData, latestStatus);
@@ -1892,6 +1899,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       latestProcessedSourceHash &&
       currentSourceHash &&
       latestProcessedSourceHash === currentSourceHash &&
+      !explicitRetryRequested &&
       !(latestStatus === "processing" && latestStaleProcessingRetry)
     ) {
       logger.info(
@@ -1906,7 +1914,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       return;
     }
 
-    if (after.cleanedFromHash === currentSourceHash && !staleProcessingRetry) {
+    if (after.cleanedFromHash === currentSourceHash && !staleProcessingRetry && !explicitRetryRequested) {
       logger.info(
         "[INGEST_VALIDATE] skipping cleanedFromHash already matches current source",
         {
@@ -1926,8 +1934,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
         uidHash,
         itemId,
       });
-      await ref.set(
-        {
+      await mutateCurrentIngestionItem(latestSnapshot, {
           ...(after.isDraft === true ? { draftState: "failed" } : {}),
           itemLifecycleStatus: "failed",
           ingestionStatus: "failed",
@@ -1944,13 +1951,10 @@ export const ingestItemFromPhotos = onDocumentWritten(
             },
           },
           updatedAt: Date.now(),
-        },
-        { merge: true },
-      );
+        });
       return;
     }
 
-    const runId = randomUUID();
     const nextAttempt = getIngestionAttempt(latestData ?? after) + 1;
     logger.info("[INGEST_START] transition to processing", {
       uidHash,
@@ -1961,14 +1965,12 @@ export const ingestItemFromPhotos = onDocumentWritten(
       attempt: nextAttempt,
       workerVersion: INGEST_WORKER_VERSION,
     });
-    await ref.set(
-      {
+    const lease = await claimIngestion(latestSnapshot, {
         ...(after.isDraft === true ? { draftState: "ingesting" } : {}),
         itemLifecycleStatus: "processing",
         ingestionStatus: "processing",
         backgroundRemovalMethod: hasClientCleanedImage(after) ? "client" : "none",
         ingestion: {
-          runId,
           status: "processing",
           lastRunAt: FieldValue.serverTimestamp(),
           startedAt: FieldValue.serverTimestamp(),
@@ -1983,14 +1985,20 @@ export const ingestItemFromPhotos = onDocumentWritten(
           lastProcessedSourceHash: currentSourceHash,
         },
         updatedAt: Date.now(),
-      },
-      { merge: true },
-    );
+      }).catch(async (error) => {
+        if (isAccountDeleting(error)) return null;
+        if (isAiConsentError(error)) { await pauseIngestionForConsent(uid, itemId); return null; }
+        throw error;
+      });
+    if (!lease) return;
+    const { runId } = lease;
 
     try {
       let backgroundRemovalMethod: "client" | "server" | "none" =
         hasClientCleanedImage(after) ? "client" : "none";
+      await withIngestionItem(lease);
       const extracted = await extractWithOpenAI(photoUrls);
+      await withIngestionItem(lease);
       let imageBytes = await downloadImageBytes(uid, photoUrls[0]);
       imageBytes = await normalizeImageBytesForProcessing(uid, itemId, imageBytes);
       if (backgroundRemovalMethod !== "client") {
@@ -2248,13 +2256,14 @@ export const ingestItemFromPhotos = onDocumentWritten(
         .jpeg({ quality: 78 })
         .toBuffer();
 
-      const croppedStoragePath = `users/${uid}/items/${itemId}/cropped.jpg`;
-      const thumbStoragePath = `users/${uid}/items/${itemId}/thumb.jpg`;
+      const croppedStoragePath = `users/${uid}/items/${itemId}/ingestion/${runId}/cropped.jpg`;
+      const thumbStoragePath = `users/${uid}/items/${itemId}/ingestion/${runId}/thumb.jpg`;
       const croppedUrl = await uploadImageAndGetUrl(
         croppedStoragePath,
         croppedBytes,
+        lease,
       );
-      const thumbUrl = await uploadImageAndGetUrl(thumbStoragePath, thumbBytes);
+      const thumbUrl = await uploadImageAndGetUrl(thumbStoragePath, thumbBytes, lease);
 
       const pixelPrimary = pixelResult.pixelColor;
       const pixelColors: AllowedColor[] = pixelPrimary ? [pixelPrimary] : [];
@@ -2446,49 +2455,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
         },
       });
 
-      const latestBeforeDone = await ref.get();
-      if (!latestBeforeDone.exists) {
-        logger.warn("[INGEST_VALIDATE] skipping completion because item doc was hard-deleted", {
-          uidHash,
-          itemId,
-          runId,
-        });
-        return;
-      }
-      const latestRunId = String(
-        latestBeforeDone.get("ingestion.runId") ?? "",
-      ).trim();
-      const latestDraftState = String(
-        latestBeforeDone.get("draftState") ?? "",
-      ).trim().toLowerCase();
-      const latestLifecycleStatus = String(
-        latestBeforeDone.get("itemLifecycleStatus") ?? "",
-      ).trim().toLowerCase();
-      if (
-        latestDraftState === "cancelled" ||
-        latestDraftState === "awaiting_confirmation" ||
-        latestLifecycleStatus === "deleted" ||
-        latestLifecycleStatus === "candidate"
-      ) {
-        logger.warn("[INGEST_VALIDATE] skipping completion because item was removed or is candidate-only", {
-          uidHash,
-          itemId,
-          runId,
-          latestDraftState,
-          latestLifecycleStatus,
-        });
-        return;
-      }
-      if (latestRunId && latestRunId !== runId) {
-        logger.warn("Skipping stale ingestion completion write", {
-          uidHash,
-          itemId,
-          runId,
-          latestRunId,
-        });
-        return;
-      }
-
+      await withIngestionItem(lease, (latestBeforeDone) => {
       const latestImageCandidates: {
         originalUrl?: string | null;
         aiUrl?: string | null;
@@ -2645,8 +2612,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
             : { draftState: "photo_uploaded", itemLifecycleStatus: "needs_review" }
           : { draftState: "ready", itemLifecycleStatus: "ready" };
 
-      await ref.set(
-        {
+      return {
           cleanedFromHash: currentSourceHash,
           originalImageUrl: preservedOriginalImageUrl,
           cleanedImageUrl: preservedCleanedImageUrl,
@@ -2780,9 +2746,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
             error: warning ? { message: warning, code: "warning" } : null,
           },
           updatedAt: Date.now(),
-        },
-        { merge: true },
-      );
+        };
+      });
 
       logger.info("[INGEST_SUCCESS] transition to done", {
         uidHash,
@@ -2802,6 +2767,11 @@ export const ingestItemFromPhotos = onDocumentWritten(
         processedSourceHash: currentSourceHash,
       });
     } catch (error) {
+      if (error instanceof IngestionStopped || isAccountDeleting(error)) return;
+      if (isAiConsentError(error)) {
+        await pauseIngestionForConsent(uid, itemId);
+        return;
+      }
       const message =
         error instanceof Error ? error.message : "Unknown ingestion error";
       const safeMessage = safeIngestionFailureMessage(message);
@@ -2812,61 +2782,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
         error: safeMessage,
       });
 
-      const latest = await ref.get();
-      if (!latest.exists) {
-        logger.warn("[INGEST_ERROR] skipping failure write because item doc was hard-deleted", {
-          uidHash,
-          itemId,
-          runId,
-          error: safeMessage,
-        });
-        return;
-      }
-      const latestStatus = String(
-        latest.get("ingestion.status") ?? latest.get("ingestionStatus") ?? "",
-      )
-        .trim()
-        .toLowerCase();
-      const latestRunId = String(latest.get("ingestion.runId") ?? "").trim();
-      const latestDraftState = String(latest.get("draftState") ?? "").trim().toLowerCase();
-      const latestLifecycleStatus = String(latest.get("itemLifecycleStatus") ?? "").trim().toLowerCase();
-      if (latestStatus === "done") {
-        logger.warn("[INGEST_ERROR] failure ignored because item is already done", {
-          uidHash,
-          itemId,
-          error: safeMessage,
-        });
-        return;
-      }
-      if (latestRunId && latestRunId !== runId) {
-        logger.warn("[INGEST_ERROR] skipping stale failure write", {
-          uidHash,
-          itemId,
-          runId,
-          latestRunId,
-          error: safeMessage,
-        });
-        return;
-      }
-      if (
-        latestDraftState === "cancelled" ||
-        latestDraftState === "awaiting_confirmation" ||
-        latestLifecycleStatus === "deleted" ||
-        latestLifecycleStatus === "candidate"
-      ) {
-        logger.warn("[INGEST_ERROR] skipping failure write because item was removed or is candidate-only", {
-          uidHash,
-          itemId,
-          runId,
-          latestDraftState,
-          latestLifecycleStatus,
-          error: safeMessage,
-        });
-        return;
-      }
-
-      await ref.set(
-        {
+      await withIngestionItem(lease, () => ({
           ...(after.isDraft === true ? { draftState: "failed" } : {}),
           itemLifecycleStatus: "failed",
           ingestionStatus: "failed",
@@ -2888,9 +2804,9 @@ export const ingestItemFromPhotos = onDocumentWritten(
             },
           },
           updatedAt: Date.now(),
-        },
-        { merge: true },
-      );
+        })).catch((failure) => {
+        if (!(failure instanceof IngestionStopped) && !isAccountDeleting(failure) && !isAiConsentError(failure)) throw failure;
+      });
     }
   }),
 );

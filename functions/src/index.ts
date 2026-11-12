@@ -1,3 +1,4 @@
+import { assertAiConsent, setAiConsentUser } from "./shared/aiConsent";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
@@ -6,6 +7,7 @@ import { parseOutfitIntentFromPrompt } from "./parseOutfitIntent";
 import { allowedWebOrigins } from "./shared/cors";
 import { setLogContext, tracedHandler } from "./shared/logger";
 import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "./shared/rateLimit";
+export { setAiConsent, resumeClosetAfterAiConsent } from "./aiConsent";
 export { generateOutfitsV1 } from "./generateOutfitsV1";
 export { generateAuraSwipeBatch } from "./generateAuraSwipeBatch";
 export { outfitChatV1 } from "./outfitChatV1";
@@ -21,7 +23,7 @@ export {
   reconstructOutfitLayout,
 } from "./extractOutfitItems";
 export { ingestItemFromPhotos } from "./ingestItemFromPhotos";
-export { deleteAccountData } from "./deleteAccountData";
+export { deleteAccountData, getAccountDeletionStatus, continueAccountDeletion, recoverAccountDeletions, removeDeletedAccountUpload } from "./deleteAccountData";
 export { wrapAffiliateLinks } from "./affiliate/affiliateLinks";
 export { searchLiveProducts } from "./products/searchLiveProducts";
 export {
@@ -98,8 +100,16 @@ export const parseOutfitIntent = onRequest(
       const decoded = await getAuth().verifyIdToken(token);
       uid = decoded.uid;
       setLogContext({ uidHash: redactUid(uid) });
+      setAiConsentUser(uid);
     } catch {
       res.status(401).json({ error: "Invalid token" });
+      return;
+    }
+
+    try {
+      await assertAiConsent(uid);
+    } catch {
+      res.status(403).json({ code: "AI_CONSENT_REQUIRED", error: "Review Privacy & AI in Profile before using AI." });
       return;
     }
 
@@ -128,3 +138,9 @@ export const parseOutfitIntent = onRequest(
 export const health = onRequest({ cors: false }, tracedHandler((_req, res) => {
   res.json({ ok: true, ts: Date.now() });
 }));
+
+export { revokeAppleForAccountDeletion } from "./revokeAppleForAccountDeletion";
+
+export { deleteClosetItem } from "./deleteClosetItem";
+
+export { prepareMediaWrite } from "./prepareMediaWrite";

@@ -1,3 +1,5 @@
+import { assertAiConsent, setAiConsentUser } from "./shared/aiConsent";
+import { consentedProviderFetch } from "./shared/aiConsent";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
@@ -215,7 +217,7 @@ async function parseOutfitIntent(
   }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await consentedProviderFetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -280,6 +282,8 @@ export const generateOutfitsV1 = onCall(
     await assertFunctionRateLimit(uid, "outfitGeneration", RATE_LIMITS.outfitGeneration);
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
 
     const intentText = String(request.data?.intentText ?? "").trim().slice(0, 2000);
     if (!intentText) {

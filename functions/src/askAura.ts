@@ -1,6 +1,7 @@
+import { assertAiConsent, setAiConsentUser } from "./shared/aiConsent";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "./shared/logger";
-import OpenAI from "openai";
+import OpenAI from "./shared/consentedOpenAI";
 import { getFirestore } from "firebase-admin/firestore";
 
 import { AURA_INSTRUCTIONS } from "./shared/auraPrompt";
@@ -908,6 +909,8 @@ export const askAura = onCall(
     if (!uid) {
       throw new HttpsError("unauthenticated", "User must be signed in.");
     }
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     await assertFunctionRateLimit(uid, "auraChat", RATE_LIMITS.auraChat);
 
     const userMessage = sanitizeUserInput(String(request.data?.message || ""));

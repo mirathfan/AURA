@@ -1,7 +1,14 @@
 import { HttpsError } from "firebase-functions/v2/https";
 import { createTextEmbedding, type OpenAIEmbeddingClient } from "../embeddings";
+import { consentRequired } from "../../../shared/aiConsent";
 
 describe("createTextEmbedding", () => {
+  it("preserves consent denial wrapped by the provider SDK", async () => {
+    const create = jest.fn(async () => { throw Object.assign(new Error("SDK connection error"), { cause: consentRequired() }); });
+    await expect(createTextEmbedding("synthetic", { client: { embeddings: { create } } }))
+      .rejects.toMatchObject({ details: { code: "AI_CONSENT_REQUIRED" } });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
   const originalModel = process.env.AURA_EMBEDDING_MODEL;
   const originalDimensions = process.env.AURA_EMBEDDING_DIMENSIONS;
 

@@ -1,3 +1,4 @@
+import { setUserDocument } from "../../shared/accountLifecycle";
 import { getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { logger } from "../../shared/logger";
@@ -495,7 +496,7 @@ async function readMetrics(uid: string): Promise<Record<string, unknown> | null>
 }
 
 async function writeMetrics(uid: string, metrics: AuraMetrics) {
-  await metricsRef(uid).set(sanitizeMetricsPayload(metrics), { merge: false });
+  await setUserDocument(metricsRef(uid), sanitizeMetricsPayload(metrics), { merge: false });
 }
 
 export async function recordAuraMetricEvent(

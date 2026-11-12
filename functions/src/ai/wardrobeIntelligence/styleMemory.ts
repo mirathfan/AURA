@@ -1,3 +1,5 @@
+import { userWriteBatch } from "../../shared/accountLifecycle";
+import { setUserDocument } from "../../shared/accountLifecycle";
 import { createHash } from "node:crypto";
 import { FieldValue, getFirestore, type Query } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
@@ -683,7 +685,7 @@ async function defaultGetMemory(uid: string, memoryId: string): Promise<StyleMem
 }
 
 async function defaultCreateMemory(uid: string, memory: StyleMemory): Promise<void> {
-  await getFirestore().collection("users").doc(uid).collection("styleMemories").doc(memory.id).set({
+  await setUserDocument(getFirestore().collection("users").doc(uid).collection("styleMemories").doc(memory.id), {
     ...memory,
     embeddingVector: FieldValue.vector(memory.embeddingVector as number[]),
     createdAt: FieldValue.serverTimestamp(),
@@ -693,7 +695,7 @@ async function defaultCreateMemory(uid: string, memory: StyleMemory): Promise<vo
 }
 
 async function defaultUpdateMemory(uid: string, memoryId: string, patch: Partial<StyleMemory>): Promise<void> {
-  await getFirestore().collection("users").doc(uid).collection("styleMemories").doc(memoryId).set({
+  await setUserDocument(getFirestore().collection("users").doc(uid).collection("styleMemories").doc(memoryId), {
     ...patch,
     updatedAt: FieldValue.serverTimestamp(),
     lastReinforcedAt: FieldValue.serverTimestamp(),
@@ -712,7 +714,7 @@ export async function listActiveStyleMemories(uid: string): Promise<StyleMemory[
 }
 
 async function defaultWriteStyleProfile(uid: string, profile: StyleProfile): Promise<void> {
-  await getFirestore().collection("users").doc(uid).collection("styleProfile").doc("main").set({
+  await setUserDocument(getFirestore().collection("users").doc(uid).collection("styleProfile").doc("main"), {
     ...profile,
     updatedAt: FieldValue.serverTimestamp(),
   }, { merge: true });
@@ -1181,12 +1183,11 @@ export async function listStyleMemoriesForUser(
 }
 
 export async function softDeleteStyleMemory(uid: string, memoryId: string): Promise<void> {
-  await getFirestore()
+  await setUserDocument(getFirestore()
     .collection("users")
     .doc(uid)
     .collection("styleMemories")
-    .doc(memoryId)
-    .set({
+    .doc(memoryId), {
       active: false,
       deletedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
@@ -1210,7 +1211,7 @@ export async function softDeleteAllStyleMemoriesForUser(
   } else {
     const db = getFirestore();
     for (let index = 0; index < active.length; index += 400) {
-      const batch = db.batch();
+      const batch = userWriteBatch(db, uid);
       for (const memory of active.slice(index, index + 400)) {
         const ref = db.collection("users").doc(uid).collection("styleMemories").doc(memory.id);
         batch.set(ref, {

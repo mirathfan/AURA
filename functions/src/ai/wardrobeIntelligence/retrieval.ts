@@ -574,10 +574,11 @@ export function buildWardrobeRetrievalResult(
 export function buildWardrobeRetrievalResults(
   input: NormalizedWardrobeRetrievalInput,
   candidates: WardrobeVectorCandidate[],
+  options: { requireEmbedding?: boolean } = {},
 ): WardrobeRetrievalResult[] {
   const results: WardrobeRetrievalResult[] = [];
   for (const candidate of candidates) {
-    const result = buildWardrobeRetrievalResult(input, candidate);
+    const result = buildWardrobeRetrievalResult(input, candidate, options);
     if (result) results.push(result);
   }
   return results

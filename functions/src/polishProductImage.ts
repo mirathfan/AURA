@@ -1,9 +1,12 @@
+import { saveUserFile } from "./shared/accountStorage";
+import { assertAiConsent, setAiConsentUser } from "./shared/aiConsent";
 import { randomUUID } from "node:crypto";
 
 import { getStorage } from "firebase-admin/storage";
 import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import OpenAI, { toFile } from "openai";
+import OpenAI from "./shared/consentedOpenAI";
+import { toFile } from "openai";
 
 import { requireOpenAiApiKey } from "./shared/env";
 import {
@@ -469,7 +472,7 @@ async function uploadRefinedImage(uid: string, bytes: Buffer, traceId: string) {
     data: { storagePathType: "product_polish_refined", byteLength: bytes.length },
   });
   try {
-    await bucket.file(path).save(bytes, {
+    await saveUserFile(bucket.file(path), bytes, {
       metadata: {
         contentType: "image/jpeg",
         metadata: {
@@ -600,6 +603,8 @@ export const polishProductImage = onCall(
 
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     const featureState = await getEarlyAccessFeatureState(uid, "aiPolish");
     if (!featureState.allowed) {
       throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.featureNotAvailable.message, {

@@ -46,11 +46,12 @@ function docRef(path: string): DocRef {
 }
 
 const firestore = {
+  doc: docRef,
   collection: (name: string) => collectionRef(name),
   runTransaction: jest.fn(async (callback: (transaction: unknown) => Promise<void>) => {
     const transaction = {
       get: jest.fn(async (ref: DocRef) => ({
-        data: () => store.get(ref.path),
+        data: () => store.get(ref.path), get: (key: string) => store.get(ref.path)?.[key],
       })),
       set: jest.fn((ref: DocRef, data: Record<string, unknown>) => {
         writtenPaths.push(ref.path);

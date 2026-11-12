@@ -1,3 +1,6 @@
+import type { DocumentSnapshot } from "firebase-admin/firestore";
+import { mutateCurrentIngestionItem } from "./ingestionLifecycle";
+import { addUserDocument } from "./accountLifecycle";
 import { createHash } from "node:crypto";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { logger } from "./logger";
@@ -3242,6 +3245,7 @@ export async function createDraftItemFromProductLink(params: {
   prompt: string;
   extraction: ProductExtraction;
   itemId?: string;
+  expectedSnapshot?: DocumentSnapshot;
   draftState?: "photo_uploaded" | "awaiting_confirmation";
   ingestionStatus?: "pending" | "awaiting_confirmation";
   useV2ClosetDraft?: boolean;
@@ -3323,18 +3327,14 @@ export async function createDraftItemFromProductLink(params: {
       };
     let createdItemId = itemId;
     if (itemId) {
-      await getFirestore()
-        .collection("users")
-        .doc(uid)
-        .collection("items")
-        .doc(itemId)
-        .set(itemData, { merge: true });
+      if (!params.expectedSnapshot || !await mutateCurrentIngestionItem(params.expectedSnapshot, itemData)) {
+        throw new ProductLinkError("Item changed or was removed. Try again.", "draft_failed");
+      }
     } else {
-      const docRef = await getFirestore()
+      const docRef = await addUserDocument(getFirestore()
         .collection("users")
         .doc(uid)
-        .collection("items")
-        .add(itemData);
+        .collection("items"), itemData);
       createdItemId = docRef.id;
     }
     logger.info("[AURA_LINK_DRAFT] draft item created", {

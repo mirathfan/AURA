@@ -1,4 +1,7 @@
-import type { DocumentReference } from "firebase-admin/firestore";
+import { assertActiveInTransaction, userIdFromPath } from "../../shared/accountLifecycle";
+import { assertAiConsent, aiConsentRef, consentRequired } from "../../shared/aiConsent";
+import { isCurrentAiConsent } from "../../../../shared/aiConsent";
+import type { DocumentReference, Transaction, Timestamp } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import {
   AI_METADATA_VERSION,
@@ -10,6 +13,7 @@ import {
 import { buildClosetItemEmbeddingText } from "./embeddingText";
 import { createTextEmbedding } from "./embeddings";
 import { hashEmbeddingInput } from "./hash";
+import { isIndexableClosetItemState } from "./skip";
 import { normalizeClosetItemMetadata } from "./metadata";
 import type {
   ClosetItemDocument,
@@ -23,10 +27,15 @@ type IndexClosetItemArgs = {
   ref?: DocumentReference;
   force?: boolean;
   dryRun?: boolean;
+  consentRevision?: number;
+  itemCreatedAt?: Timestamp;
+  createEmbedding?: (text: string) => Promise<number[]>;
+  commitGuard?: (transaction: Transaction) => Promise<boolean>;
+  onCommitted?: (transaction: Transaction) => void;
 };
 
 function hasExistingEmbedding(item: ClosetItemDocument): boolean {
-  return Boolean(item.embeddingVector ?? item.embeddingRaw);
+  return Boolean(item.embeddingVector);
 }
 
 function hasEmbeddingVector(item: ClosetItemDocument): boolean {
@@ -113,9 +122,28 @@ export async function indexClosetItemIntelligence(
     throw new Error("A Firestore document reference is required to index closet item intelligence.");
   }
 
-  const embedding = await createTextEmbedding(embeddingText);
-  await args.ref.set(
-    {
+  const consent = await assertAiConsent(userIdFromPath(args.ref.path));
+  if (args.consentRevision !== undefined && consent.revision !== args.consentRevision) throw consentRequired();
+  const embedding = await (args.createEmbedding ?? ((text) => createTextEmbedding(text, { maxRetries: 0 })))(embeddingText);
+  const ref = args.ref;
+  // AI work can finish after an edit or deletion. Read and condition the write
+  // in one transaction so stale events cannot restore removed user data.
+  const written = await ref.firestore.runTransaction(async (transaction) => {
+    await assertActiveInTransaction(transaction, userIdFromPath(ref.path));
+    const currentConsent = await transaction.get(aiConsentRef(userIdFromPath(ref.path)));
+    if (!isCurrentAiConsent(currentConsent.data()) || currentConsent.get("revision") !== consent.revision) throw consentRequired();
+    if (args.commitGuard && !await args.commitGuard(transaction)) return false;
+    const latest = await transaction.get(ref);
+    const current = latest.data() as ClosetItemDocument | undefined;
+    if (
+      !current ||
+      (args.itemCreatedAt && !latest.createTime?.isEqual(args.itemCreatedAt)) ||
+      !isIndexableClosetItemState(current) ||
+      buildClosetItemIntelligenceInput(current).embeddingHash !== embeddingHash
+    ) {
+      return false;
+    }
+    transaction.set(ref, {
       aiMetadata,
       aiMetadataVersion: AI_METADATA_VERSION,
       embeddingText,
@@ -128,9 +156,22 @@ export async function indexClosetItemIntelligence(
       intelligenceUpdatedAt: FieldValue.serverTimestamp(),
       lastIntelligenceRunAt: FieldValue.serverTimestamp(),
       lastIntelligenceReason: reason,
-    },
-    { merge: true },
-  );
+    }, { merge: true });
+    args.onCommitted?.(transaction);
+    return true;
+  });
+
+  if (!written) {
+    return {
+      itemId: args.itemId,
+      status: "skipped",
+      reason: "item removed or changed during indexing",
+      embeddingText,
+      embeddingTextPreview: preview(embeddingText),
+      aiMetadata,
+      embeddingHash,
+    };
+  }
 
   return {
     itemId: args.itemId,

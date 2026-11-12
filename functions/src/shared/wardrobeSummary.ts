@@ -1,3 +1,4 @@
+import { setUserDocument } from "./accountLifecycle";
 import { createHash } from "node:crypto";
 import { FieldValue, Firestore } from "firebase-admin/firestore";
 import { Slot, WardrobeItem, getSlotForItem } from "./outfitEngine";
@@ -140,13 +141,10 @@ export async function getOrRefreshWardrobeSummary(
   }
 
   const summary = buildSummary(items, itemHash);
-  await summaryRef.set(
-    {
+  await setUserDocument(summaryRef, {
       ...summary,
       updatedAt: summary.updatedAt,
       serverUpdatedAt: FieldValue.serverTimestamp(),
-    },
-    {merge: true}
-  );
+    }, {merge: true});
   return summary;
 }

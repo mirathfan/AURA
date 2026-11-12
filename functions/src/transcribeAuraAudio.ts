@@ -1,7 +1,9 @@
+import { assertAiConsent, setAiConsentUser } from "./shared/aiConsent";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import { getStorage } from "firebase-admin/storage";
-import OpenAI, { toFile } from "openai";
+import OpenAI from "./shared/consentedOpenAI";
+import { toFile } from "openai";
 
 import {
   RATE_LIMITS,
@@ -35,6 +37,8 @@ export const transcribeAuraAudio = onCall(
     await assertFunctionRateLimit(uid, "voiceTranscription", RATE_LIMITS.voiceTranscription);
     const uidHash = redactUid(uid);
     setLogContext({ uidHash });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
 
     const storagePath = String(request.data?.storagePath ?? "").trim();
     const requestedMimeType = String(request.data?.mimeType ?? "").trim() || null;

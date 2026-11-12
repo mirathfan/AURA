@@ -1,3 +1,4 @@
+import { assertAiConsent, setAiConsentUser } from "../../shared/aiConsent";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "../../shared/logger";
 import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
@@ -158,6 +159,8 @@ export const previewOutfitGenerationContext = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     await assertFunctionRateLimit(uid, "wardrobeRetrieval", RATE_LIMITS.wardrobeRetrieval);
     logger.info(`${LOG_PREFIX} context preview started`, { uidHash: redactUid(uid) });
     const response = await handlePreviewOutfitGenerationContext(uid, request.data);
@@ -175,6 +178,8 @@ export const generateOutfitRecommendations = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
+    await assertAiConsent(uid);
     await assertFunctionRateLimit(uid, "outfitGeneration", RATE_LIMITS.outfitGeneration);
     logger.info(`${LOG_PREFIX} generation started`, { uidHash: redactUid(uid) });
     const response = await handleGenerateOutfitRecommendations(uid, request.data);

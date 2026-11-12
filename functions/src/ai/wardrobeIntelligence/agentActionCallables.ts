@@ -1,3 +1,6 @@
+import { userWriteBatch } from "../../shared/accountLifecycle";
+import { setUserDocument } from "../../shared/accountLifecycle";
+import { assertAiConsent, isAiConsentError, setAiConsentUser } from "../../shared/aiConsent";
 import { createHash } from "node:crypto";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
@@ -299,7 +302,7 @@ async function defaultGetSavedOutfit(uid: string, id: string) {
 }
 
 async function defaultSetSavedOutfit(uid: string, id: string, payload: Record<string, unknown>) {
-  await getFirestore().collection("users").doc(uid).collection("savedOutfits").doc(id).set(payload, { merge: true });
+  await setUserDocument(getFirestore().collection("users").doc(uid).collection("savedOutfits").doc(id), payload, { merge: true });
 }
 
 async function defaultGetWearEvent(uid: string, id: string) {
@@ -308,7 +311,7 @@ async function defaultGetWearEvent(uid: string, id: string) {
 }
 
 async function defaultSetWearEvent(uid: string, id: string, payload: Record<string, unknown>) {
-  await getFirestore().collection("users").doc(uid).collection("wearEvents").doc(id).set(payload, { merge: true });
+  await setUserDocument(getFirestore().collection("users").doc(uid).collection("wearEvents").doc(id), payload, { merge: true });
 }
 
 async function defaultGetOutfitEvent(uid: string, id: string) {
@@ -317,7 +320,7 @@ async function defaultGetOutfitEvent(uid: string, id: string) {
 }
 
 async function defaultSetOutfitEvent(uid: string, id: string, payload: Record<string, unknown>) {
-  await getFirestore().collection("users").doc(uid).collection("outfitEvents").doc(id).set(payload, { merge: true });
+  await setUserDocument(getFirestore().collection("users").doc(uid).collection("outfitEvents").doc(id), payload, { merge: true });
 }
 
 async function defaultGetDislikedOutfit(uid: string, id: string) {
@@ -326,20 +329,20 @@ async function defaultGetDislikedOutfit(uid: string, id: string) {
 }
 
 async function defaultSetDislikedOutfit(uid: string, id: string, payload: Record<string, unknown>) {
-  await getFirestore().collection("users").doc(uid).collection("dislikedOutfits").doc(id).set(payload, { merge: true });
+  await setUserDocument(getFirestore().collection("users").doc(uid).collection("dislikedOutfits").doc(id), payload, { merge: true });
 }
 
 async function defaultSetOutfitFeedback(uid: string, id: string, payload: Record<string, unknown>) {
-  await getFirestore().collection("users").doc(uid).collection("outfitFeedback").doc(id).set(payload, { merge: true });
+  await setUserDocument(getFirestore().collection("users").doc(uid).collection("outfitFeedback").doc(id), payload, { merge: true });
 }
 
 async function defaultSetDailyOutfit(uid: string, dateKeyValue: string, payload: Record<string, unknown>) {
-  await getFirestore().collection("users").doc(uid).collection("outfits").doc(dateKeyValue).set(payload, { merge: true });
+  await setUserDocument(getFirestore().collection("users").doc(uid).collection("outfits").doc(dateKeyValue), payload, { merge: true });
 }
 
 async function defaultUpdateWearMetadata(uid: string, itemIds: string[], date: Date, outfit: AgentOutfitRecord) {
   const db = getFirestore();
-  const batch = db.batch();
+  const batch = userWriteBatch(db, uid);
   const now = FieldValue.serverTimestamp();
   const wornTimestamp = Timestamp.fromDate(date);
   const itemRefs = itemIds.map((itemId) => db.collection("users").doc(uid).collection("items").doc(itemId));
@@ -376,7 +379,14 @@ async function recordFeedbackOnce(
   feedbackType: FeedbackType,
   deps: AgentActionDeps,
 ) {
-  const recordFeedback = deps.recordFeedback ?? recordStyleMemoryFeedback;
+  // Saving/wearing/planning is non-AI. Optional learning must not block it.
+  if (!deps.recordFeedback) {
+    try { await assertAiConsent(uid); } catch { return; }
+  }
+  const recordFeedback = deps.recordFeedback ?? (async (...args: Parameters<typeof recordStyleMemoryFeedback>) => {
+    try { return await recordStyleMemoryFeedback(...args); }
+    catch (error) { if (!isAiConsentError(error)) throw error; return undefined; }
+  });
   await recordFeedback(uid, {
     query: input.query,
     occasion: input.outfit.occasion,
@@ -488,7 +498,7 @@ export async function handleSaveAuraAgentOutfit(
   const input = normalizeInput(data);
   const id = `aura_agent_${input.outfit.outfitFingerprint}`;
   const existing = await (deps.getSavedOutfit ?? defaultGetSavedOutfit)(userId, id);
-  if (existing) {
+  if (existing && existing.active !== false) {
     await safeRecordAuraMetricEvent(userId, { type: "saved_outfit_duplicate" });
     return {
       saved: true,
@@ -522,6 +532,8 @@ export async function handleSaveAuraAgentOutfit(
     updatedAt: FieldValue.serverTimestamp(),
     savedAt: FieldValue.serverTimestamp(),
     savedAtMs: timestamp.getTime(),
+    active: true,
+    deletedAt: FieldValue.delete(),
   };
   await (deps.setSavedOutfit ?? defaultSetSavedOutfit)(userId, id, payload);
   await (deps.setOutfitEvent ?? defaultSetOutfitEvent)(userId, `saved_${input.outfit.outfitFingerprint}`, buildCalendarEventPayload({
@@ -766,6 +778,7 @@ export const saveAuraAgentOutfit = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handleSaveAuraAgentOutfit(uid, request.data);
   }),
@@ -776,6 +789,7 @@ export const logAuraAgentOutfitWear = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handleLogAuraAgentOutfitWear(uid, request.data);
   }),
@@ -786,6 +800,7 @@ export const planAuraAgentOutfit = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handlePlanAuraAgentOutfit(uid, request.data);
   }),
@@ -796,6 +811,7 @@ export const dislikeAuraAgentOutfit = onCall(
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });
+    setAiConsentUser(uid);
     await assertFunctionRateLimit(uid, "styleMemoryAi", RATE_LIMITS.styleMemoryAi);
     return handleDislikeAuraAgentOutfit(uid, request.data);
   }),

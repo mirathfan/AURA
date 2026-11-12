@@ -1,3 +1,4 @@
+import { assertActiveInTransaction } from "./accountLifecycle";
 import { createHash } from "node:crypto";
 
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
@@ -25,6 +26,8 @@ export function dayLimit(max: number): RateLimitRule {
 }
 
 export const RATE_LIMITS = {
+  itemDeletion: [minuteLimit(60), dayLimit(500)],
+  prepareMediaWrite: [minuteLimit(60), dayLimit(2000)],
   auraChat: [minuteLimit(6), dayLimit(40)],
   productLink: [minuteLimit(5), dayLimit(30)],
   imageIngestion: [minuteLimit(3), dayLimit(25)],
@@ -42,6 +45,7 @@ export const RATE_LIMITS = {
   wardrobeIndexing: [minuteLimit(10), dayLimit(50)],
   wardrobeBackfill: [minuteLimit(1), dayLimit(1)],
   voiceTranscription: [minuteLimit(6), dayLimit(60)],
+  appleRevocation: [minuteLimit(2), dayLimit(10)],
   accountDelete: [dayLimit(3)],
 } as const;
 
@@ -57,8 +61,8 @@ export async function assertFunctionRateLimit(
   uid: string,
   endpoint: keyof typeof RATE_LIMITS | string,
   rules: readonly RateLimitRule[],
+  now = Date.now(),
 ) {
-  const now = Date.now();
   const db = getFirestore();
   const uidHash = redactUid(uid);
   const windows = rules.map((rule) => {
@@ -77,6 +81,7 @@ export async function assertFunctionRateLimit(
   });
 
   await db.runTransaction(async (transaction) => {
+    await assertActiveInTransaction(transaction, uid);
     const snapshots = await Promise.all(windows.map((entry) => transaction.get(entry.ref)));
     const blocked = snapshots
       .map((snapshot, index) => ({
@@ -92,7 +97,11 @@ export async function assertFunctionRateLimit(
         window: blocked.rule.key,
         max: blocked.rule.max,
       });
-      throw new HttpsError("resource-exhausted", RATE_LIMIT_MESSAGE);
+      throw new HttpsError("resource-exhausted", RATE_LIMIT_MESSAGE, {
+        retryAt: Math.max(...snapshots.flatMap((snapshot, index) =>
+          Number(snapshot.data()?.count ?? 0) >= windows[index].rule.max
+            ? [(Math.floor(now / windows[index].rule.windowMs) + 1) * windows[index].rule.windowMs] : [])),
+      });
     }
 
     snapshots.forEach((snapshot, index) => {
