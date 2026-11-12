@@ -19,7 +19,7 @@ module.exports = {
     "^.+\\.(js|jsx)$": "babel-jest",
   },
   transformIgnorePatterns: [
-    "node_modules/(?!(react-native|@react-native|@testing-library|expo|@expo|expo-.*|@expo/.*)/)",
+    "node_modules/(?!(react-native|react-native-.*|@react-native|@react-navigation|@testing-library|expo|@expo|expo-.*|@expo/.*)/)",
   ],
   watchPathIgnorePatterns: ["<rootDir>/.claude/"],
 };
