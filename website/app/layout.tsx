@@ -1,11 +1,10 @@
 import type { Metadata, Viewport } from "next";
-import { Bodoni_Moda, Manrope } from "next/font/google";
+import { Instrument_Sans, Manrope } from "next/font/google";
 import "./globals.css";
 
-const display = Bodoni_Moda({
+const display = Instrument_Sans({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  style: ["normal", "italic"],
+  weight: ["400", "500", "600", "700"],
   variable: "--font-display",
   display: "swap",
 });
@@ -55,7 +54,8 @@ export const metadata: Metadata = {
     images: ["/assets/hero-product-visual.webp"],
   },
   icons: {
-    icon: "/assets/favicon.png",
+    icon: [{ url: "/assets/favicon.png", sizes: "64x64", type: "image/png" }],
+    apple: "/assets/aura-logo-black.png",
   },
 };
 

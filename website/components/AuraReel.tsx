@@ -1,6 +1,6 @@
 "use client";
 
-import { Player } from "@remotion/player";
+import { Player, type PlayerRef } from "@remotion/player";
 import {
   AbsoluteFill,
   Img,
@@ -12,22 +12,23 @@ import {
   useVideoConfig,
 } from "remotion";
 import { useReducedMotion } from "motion/react";
+import { useEffect, useRef, useState } from "react";
 
 const slides = [
   {
-    src: "assets/aura-chat-screen-public.webp",
-    label: "Closet-based styling",
-    note: "Looks built from pieces you own",
+    src: "assets/closet-grid-screen-public.webp",
+    label: "Build your digital closet",
+    note: "Clean pieces, useful context, everything you own in one place.",
   },
   {
-    src: "assets/closet-grid-screen-public.webp",
-    label: "A closet that stays useful",
-    note: "Clean items, searchable context",
+    src: "assets/aura-chat-screen-public.webp",
+    label: "Style what you already own",
+    note: "Ask for a look and get an answer grounded in your wardrobe.",
   },
   {
     src: "assets/calendar-screen-public.webp",
-    label: "Plan the week ahead",
-    note: "Outfits meet dates and daily context",
+    label: "Plan the day ahead",
+    note: "Carry the finished outfit into your calendar when it matters.",
   },
 ];
 
@@ -65,12 +66,20 @@ function ReelSlide({
   );
 }
 
+function ReelProgress() {
+  const frame = useCurrentFrame();
+  const width = interpolate(frame, [0, 239], [0, 100], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  return <div className="reel-progress"><span style={{ width: `${width}%` }} /></div>;
+}
+
 function AuraReelComposition() {
   return (
     <AbsoluteFill className="reel-canvas">
-      <div className="reel-aura-mark">AURA</div>
-      <div className="reel-orbit reel-orbit-one" />
-      <div className="reel-orbit reel-orbit-two" />
+      <div className="reel-aura-mark">AURA / PRODUCT TOUR</div>
+      <ReelProgress />
       {slides.map((slide, index) => (
         <Sequence key={slide.src} from={index * 80} durationInFrames={80} premountFor={12}>
           <ReelSlide {...slide} index={index} />
@@ -82,23 +91,62 @@ function AuraReelComposition() {
 
 export function AuraReel() {
   const reduceMotion = useReducedMotion();
+  const playerRef = useRef<PlayerRef>(null);
+  const [activeSlide, setActiveSlide] = useState(0);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+
+    const updateActiveSlide = ({ detail }: { detail: { frame: number } }) => {
+      setActiveSlide(Math.min(slides.length - 1, Math.floor(detail.frame / 80)));
+    };
+
+    player.addEventListener("frameupdate", updateActiveSlide);
+    return () => player.removeEventListener("frameupdate", updateActiveSlide);
+  }, []);
+
+  function selectSlide(index: number) {
+    const player = playerRef.current;
+    if (!player) return;
+    player.seekTo(index * 80 + 8);
+    setActiveSlide(index);
+    if (!reduceMotion) player.play();
+  }
 
   return (
-    <div className="reel-player" aria-label="Animated preview of the AURA app">
-      <Player
-        component={AuraReelComposition}
-        durationInFrames={240}
-        compositionWidth={800}
-        compositionHeight={1000}
-        fps={30}
-        autoPlay={!reduceMotion}
-        initialFrame={reduceMotion ? 30 : 0}
-        loop
-        controls={false}
-        clickToPlay={false}
-        acknowledgeRemotionLicense
-        style={{ width: "100%", height: "100%" }}
-      />
+    <div className="reel-shell">
+      <div className="reel-player" aria-label="Animated preview of the AURA app">
+        <Player
+          ref={playerRef}
+          component={AuraReelComposition}
+          durationInFrames={240}
+          compositionWidth={1000}
+          compositionHeight={600}
+          fps={30}
+          autoPlay={!reduceMotion}
+          initialFrame={reduceMotion ? 30 : 0}
+          loop
+          controls={false}
+          clickToPlay={false}
+          acknowledgeRemotionLicense
+          style={{ width: "100%", height: "100%" }}
+        />
+      </div>
+      <div className="reel-navigation" aria-label="Product tour steps">
+        {slides.map((slide, index) => (
+          <button
+            key={slide.src}
+            type="button"
+            className={activeSlide === index ? "is-active" : ""}
+            aria-pressed={activeSlide === index}
+            onClick={() => selectSlide(index)}
+          >
+            <span>0{index + 1}</span>
+            {slide.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

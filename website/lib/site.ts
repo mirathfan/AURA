@@ -1,10 +1,7 @@
-const configuredSupportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim() ?? "";
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { AURA_PUBLIC_DETAILS } from "./privacyPolicy";
 
-export const supportEmail = emailPattern.test(configuredSupportEmail)
-  ? configuredSupportEmail
-  : null;
-
-export const supportEmailLabel = supportEmail ?? "Support email pending final configuration";
-export const supportEmailHref = supportEmail ? `mailto:${supportEmail}` : null;
+// Canonical Beta 1 contact, shared with the app. This is not verification.
+export const supportEmail = AURA_PUBLIC_DETAILS.supportEmail;
+export const supportEmailLabel = supportEmail;
+export const supportEmailHref = `mailto:${supportEmail}`;
 export const policyUpdatedLabel = "August 15, 2026";

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandLogo } from "./BrandLogo";
 
 type PolicyShellProps = {
   eyebrow: string;
@@ -18,7 +19,7 @@ export function PolicyShell({ eyebrow, title, intro, children }: PolicyShellProp
   return (
     <div className="policy-page">
       <header className="policy-header">
-        <Link className="wordmark" href="/" aria-label="AURA home">AURA®</Link>
+        <Link className="wordmark" href="/" aria-label="AURA home"><BrandLogo priority /></Link>
         <nav aria-label="Policy navigation">
           {policyLinks.map(([label, href]) => <Link key={href} href={href}>{label}</Link>)}
         </nav>
