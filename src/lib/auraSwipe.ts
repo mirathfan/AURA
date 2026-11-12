@@ -1,3 +1,4 @@
+import { requireClientAiConsent } from "../privacy/consentClient";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { Alert } from "react-native";
 
@@ -338,6 +339,7 @@ async function callGenerateOutfitsV1(args: GenerateAuraSwipeBatchArgs) {
 export async function generateAuraSwipeBatch(
   args?: GenerateAuraSwipeBatchArgs & { items?: ClothingItem[] },
 ): Promise<GenerateAuraSwipeBatchResponse> {
+  await requireClientAiConsent();
   const request = {
     intentText:
       args?.intentText ??

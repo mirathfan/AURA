@@ -65,6 +65,9 @@ export default function WelcomeScreen() {
                   Forgot password
                 </Text>
               </Pressable>
+              <Pressable accessibilityRole="link" onPress={() => router.push("/privacy" as never)} style={{ paddingVertical: 8 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 14, fontFamily: Fonts.sans }}>Privacy Policy</Text>
+              </Pressable>
             </View>
           </Animated.View>
         </View>

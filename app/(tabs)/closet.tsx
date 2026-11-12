@@ -22,7 +22,7 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { doc, getDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { doc, getDoc, updateDoc, writeBatch } from "@/src/lib/mediaFirestore";
 
 import {
   ClosetFilterSheet,

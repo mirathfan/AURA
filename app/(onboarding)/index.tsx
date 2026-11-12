@@ -1,3 +1,4 @@
+import { router } from "expo-router";
 import Slider from "@react-native-community/slider";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -519,6 +520,9 @@ export default function OnboardingScreen() {
             </Animated.View>
           </ScrollView>
 
+          <Pressable accessibilityRole="link" onPress={() => router.push("/privacy" as never)} style={{ paddingVertical: 8 }}>
+            <Text style={{ color: colors.textSecondary, textAlign: "center" }}>Privacy, terms & support</Text>
+          </Pressable>
           {!isFirstStep ? (
             <View style={[styles.footer, { backgroundColor: colors.background }]}>
               {saveError ? (

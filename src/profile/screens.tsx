@@ -1,10 +1,10 @@
+import { AURA_PUBLIC_DETAILS } from "@/shared/privacyPolicy";
 import { router } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import Constants from "expo-constants";
 import * as ImagePicker from "expo-image-picker";
 import { sendEmailVerification, sendPasswordResetEmail, signOut, updateProfile } from "firebase/auth";
 import { collection, doc, getDoc, getDocs, limit, orderBy, query } from "firebase/firestore";
-import { getFunctions, httpsCallable } from "firebase/functions";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -41,7 +41,7 @@ import {
   resolveUserCurrency,
   type SupportedCurrencyCode,
 } from "@/src/lib/currency";
-import { app, auth, db, storage } from "@/src/lib/firebase";
+import { auth, db, storage } from "@/src/lib/firebase";
 import { getFriendlyErrorMessage } from "@/src/lib/errors";
 import { signOutGoogle } from "@/src/auth/googleAuth";
 import { Storage } from "@/src/lib/storage";
@@ -102,13 +102,7 @@ const SHOE_SIZE_OPTIONS = {
   EU: ["EU 38", "EU 39", "EU 40", "EU 41", "EU 42", "EU 43", "EU 44", "EU 45", "EU 46", "EU 47"],
 } as const;
 
-type DeleteAccountDataResult = {
-  ok: boolean;
-  firestoreDocumentsDeleted: number;
-  storageFilesDeleted: number;
-  rateLimitDocumentsDeleted?: number;
-  authUserDeleted: boolean;
-};
+
 
 const TOP_FIT_OPTIONS = ["slim", "regular", "relaxed", "oversized"] as const;
 const OUTERWEAR_FIT_OPTIONS = ["slim", "regular", "roomy"] as const;
@@ -778,42 +772,8 @@ export function AccountScreen() {
   }, [user?.uid]);
 
   const confirmDeleteAccount = useCallback(() => {
-    Alert.alert(
-      "Delete account?",
-      "This permanently deletes your account, closet data, AURA chats, saved looks, and uploaded files.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Continue",
-          style: "destructive",
-          onPress: () => {
-            Alert.alert("Final confirmation", "Delete your account and data now?", [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () => {
-                  void runAction("Delete account", async () => {
-                    const uid = auth.currentUser?.uid ?? user?.uid ?? null;
-                    if (!uid) throw new Error("Please sign in again first.");
-                    const callable = httpsCallable<{ uid: string }, DeleteAccountDataResult>(
-                      getFunctions(app),
-                      "deleteAccountData",
-                    );
-                    await callable({ uid });
-                    await signOutGoogle().catch(() => undefined);
-                    await Storage.clearUserScopedData(uid).catch(() => undefined);
-                    await signOut(auth).catch(() => undefined);
-                    router.replace("/(auth)/welcome");
-                  });
-                },
-              },
-            ]);
-          },
-        },
-      ],
-    );
-  }, [runAction, user?.uid]);
+    router.push("/account-deletion" as never);
+  }, []);
 
   return (
     <SafeScreen backgroundColor={colors.background} includeTopInset={false} includeBottomInset={false} style={{ flex: 1 }}>
@@ -951,6 +911,11 @@ export function AccountScreen() {
             </AccountSection>
 
             <AccountSection title="DANGER ZONE">
+              <AccountActionRow
+                title="Privacy & deletion support"
+                subtitle={`Privacy Policy, terms and ${AURA_PUBLIC_DETAILS.supportEmail}`}
+                onPress={() => router.push("/privacy" as never)}
+              />
               <AccountActionRow
                 title={loggingOut ? "Signing out..." : "Log out"}
                 subtitle="End this session on this device."

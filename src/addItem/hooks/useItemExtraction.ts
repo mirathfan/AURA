@@ -1,12 +1,12 @@
+import { commitUploadedDraft, ensureUploadItem } from "../../lib/itemUploadLifecycle";
 import { InteractionManager } from "react-native";
 import {
   collection,
-  deleteDoc,
   doc,
   getDoc,
   onSnapshot,
   setDoc,
-} from "firebase/firestore";
+} from "@/src/lib/mediaFirestore";
 import {
   useCallback,
   useEffect,
@@ -34,6 +34,7 @@ import {
   UPLOAD_TIMEOUT_MS,
   uploadWithTimeout,
 } from "../controllerShared";
+import { requestItemDeletion } from "../../lib/deleteItem";
 import { db } from "../../lib/firebase";
 import { normalizeCategoryForStorage } from "../../lib/items";
 import { photoPipelineDuration, photoPipelineNow, safeErrorData } from "../../lib/photoPipelineLogger";
@@ -419,7 +420,7 @@ export function useItemExtraction({
           }
           return;
         }
-        await deleteDoc(draftRef);
+        await requestItemDeletion(uid, itemId, true);
       } catch {
       }
     },
@@ -662,6 +663,13 @@ export function useItemExtraction({
       setAutofillError(null);
       setExtractionPartialSuccess(false);
       setAiStage("Details");
+    } else if (effectiveStatus === "consent_required") {
+      setAiStatus("idle");
+      setAutofillStatusThrottled("AI sharing is off — add details manually, or review Privacy & AI in Profile.");
+      setIsAutofillRunning(false);
+      setAutofillError(null);
+      setExtractionPartialSuccess(false);
+      setAiStage(null);
     } else if (effectiveStatus === "done") {
       const startedAt = activePhotoHash ? extractionStartedAtByHashRef.current.get(activePhotoHash) : null;
       photo.actions.logPhotoPipelineEvent?.(traceId, "extraction", "success", {
@@ -1301,6 +1309,13 @@ export function useItemExtraction({
             return;
           }
         }
+        if (reusableDraftId && !existingDraftSnap.exists()) return;
+        // Persist a fresh identity before the asynchronous upload. Finalization
+        // updates it; it never recreates an item removed while bytes were sent.
+        if (!existingDraftSnap.exists()) {
+          await ensureUploadItem(uid, draftRef.id);
+        }
+        const uploadBaseline = await getDoc(draftRef);
         const uploaded = await uploadWithTimeout(
           uploadItemPhoto({
             uid,
@@ -1393,7 +1408,9 @@ export function useItemExtraction({
           },
         };
         const draftUpdateStartedAt = photoPipelineNow();
-        await setDoc(draftRef, draftPayload, { merge: true });
+        if (runId !== aiRunIdRef.current) return;
+        const finalized = await commitUploadedDraft(draftRef, uploadBaseline, draftPayload, () => runId === aiRunIdRef.current);
+        if (!finalized) return;
         photo.actions.logPhotoPipelineEvent?.(traceId, "draft_updated", "success", {
           draftId: draftRef.id,
           hasPrimaryUrl: !!uploaded.primaryUrl,

@@ -1,3 +1,4 @@
+import { AiConsentGate } from "@/src/privacy/AiConsentProvider";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
@@ -180,6 +181,10 @@ function preloadLookImages(looks: AuraSwipeBatchLook[]) {
 }
 
 export default function AuraSwipeScreen() {
+  return <AiConsentGate><AuraSwipeScreenContent /></AiConsentGate>;
+}
+
+function AuraSwipeScreenContent() {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();

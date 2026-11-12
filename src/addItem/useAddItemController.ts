@@ -515,6 +515,7 @@ export function useAddItemController({
   }, [draft.actions, draft.state.fit, draft.state.occasionTags, draft.state.seasonTags, extraction.state.aiFit, extraction.state.aiOccasionTags, extraction.state.aiSeasonTags]);
 
   const aiStatusRows = useMemo(() => {
+    if (extraction.state.ingestionStatus === "consent_required") return ["AI sharing is off — continue manually, or review Privacy & AI in Profile."];
     if (extraction.state.extractionPartialSuccess) {
       return [
         "Detected most details — review before saving.",
@@ -588,6 +589,7 @@ export function useAddItemController({
   ]);
 
   const aiStatusPill = useMemo(() => {
+    if (extraction.state.ingestionStatus === "consent_required") return { label: "AI sharing off · manual details available", tone: "idle" as const };
     if (extraction.state.extractionPartialSuccess) {
       return { label: "Detected most details — review before saving.", tone: "ready" as const };
     }

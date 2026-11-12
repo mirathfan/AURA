@@ -7,7 +7,7 @@ import {
   orderBy,
   query,
   setDoc,
-} from "firebase/firestore";
+} from "@/src/lib/mediaFirestore";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,

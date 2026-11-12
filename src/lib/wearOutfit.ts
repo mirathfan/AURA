@@ -4,7 +4,7 @@ import {
   increment,
   serverTimestamp,
   writeBatch,
-} from "firebase/firestore";
+} from "@/src/lib/mediaFirestore";
 
 import { db } from "@/src/lib/firebase";
 import { logItemStyleEvent, logOutfitSnapshotWornStyleEvent } from "@/src/lib/auraMemory";

@@ -9,7 +9,7 @@ import {
   serverTimestamp,
   setDoc,
   type Unsubscribe,
-} from "firebase/firestore";
+} from "@/src/lib/mediaFirestore";
 
 import { db } from "@/src/lib/firebase";
 import type {

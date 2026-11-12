@@ -1,3 +1,5 @@
+import { AI_CONSENT_MESSAGE, AI_CONSENT_REQUIRED } from "../../shared/aiConsent";
+import { requireClientAiConsent } from "../privacy/consentClient";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
 import { app, auth } from "@/src/lib/firebase";
@@ -329,7 +331,9 @@ export function normalizeAuraAgentError(error: unknown): AuraAgentClientError {
   const lower = `${code ?? ""} ${originalMessage}`.toLowerCase();
 
   let message = AURA_AGENT_FALLBACK_MESSAGE;
-  if (lower.includes("auth") || lower.includes("unauthenticated") || lower.includes("permission")) {
+  if (code === AI_CONSENT_REQUIRED || (details as { code?: string } | undefined)?.code === AI_CONSENT_REQUIRED) {
+    message = AI_CONSENT_MESSAGE;
+  } else if (lower.includes("auth") || lower.includes("unauthenticated") || lower.includes("permission")) {
     message = AURA_AGENT_SIGN_IN_MESSAGE;
   } else if (lower.includes("not enough") || lower.includes("minimum closet")) {
     message = "I need a few more ready closet items before I can build that outfit.";
@@ -423,6 +427,7 @@ export async function runAuraStylingAgentClient(
   input: AuraAgentRequest,
   options: RunAuraStylingAgentOptions = {},
 ): Promise<AuraAgentResponse> {
+  await requireClientAiConsent();
   const user = auth.currentUser;
   if (!user) {
     const authError = new AuraAgentClientError(AURA_AGENT_SIGN_IN_MESSAGE, {

@@ -1,3 +1,4 @@
+import { requireClientAiConsent } from "../privacy/consentClient";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { Alert, Platform } from "react-native";
 
@@ -152,6 +153,7 @@ function chatOnlyAuraResponse(reply: string): AuraResponse {
 }
 
 export async function askAura(args: AskAuraArgs): Promise<AuraResponse> {
+  await requireClientAiConsent();
   const safeArgs = sanitizeAuraArgs(args);
   const functions = getFunctions(app);
   logAuraRequest("callable_send", safeArgs);
@@ -902,6 +904,7 @@ export async function askAuraStream(
   args: AskAuraArgs,
   callbacks: AskAuraStreamCallbacks = {}
 ): Promise<AuraResponse> {
+  await requireClientAiConsent();
   const enrichedArgs = sanitizeAuraArgs(await withClientLinkPreview(args));
   if (callbacks.signal?.aborted) throw createAuraStreamAbortError();
   const currentUser = auth.currentUser;
@@ -1092,6 +1095,7 @@ export async function transcribeAuraAudio(params: {
   mimeType: string;
   durationMs?: number | null;
 }): Promise<string> {
+  await requireClientAiConsent();
   const functions = getFunctions(app);
   const callable = httpsCallable<
     { storagePath: string; mimeType: string; durationMs?: number | null },
@@ -1116,6 +1120,7 @@ export async function importProductLinkToWardrobe(
   url: string,
   itemId?: string
 ): Promise<{ itemId: string; imageCount: number }> {
+  await requireClientAiConsent();
   const functions = getFunctions(app);
   const callable = httpsCallable<
     { url: string; itemId?: string },

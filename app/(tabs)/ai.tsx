@@ -1,3 +1,4 @@
+import { AiConsentGate } from "@/src/privacy/AiConsentProvider";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Clipboard from "expo-clipboard";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -1895,6 +1896,10 @@ function userFacingAuraError(error: unknown) {
 }
 
 export default function AIScreen() {
+  return <AiConsentGate><AIScreenContent /></AiConsentGate>;
+}
+
+function AIScreenContent() {
   const params = useLocalSearchParams<{
     prompt?: string | string[];
     promptKey?: string | string[];

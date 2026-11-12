@@ -14,7 +14,7 @@ import {
   where,
   type QueryDocumentSnapshot,
   type Unsubscribe,
-} from "firebase/firestore";
+} from "@/src/lib/mediaFirestore";
 
 import { db } from "../lib/firebase";
 import { logAnalyzedOutfitStyleEvent, logWornOutfitStyleEvent } from "../lib/auraMemory";

@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, limit, orderBy, query, setDoc } from "firebase/firestore";
+import { collection, doc, getDocs, limit, orderBy, query, setDoc } from "@/src/lib/mediaFirestore";
 
 import {
   buildAuraLookSnapshot,

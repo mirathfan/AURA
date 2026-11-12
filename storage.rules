@@ -7,7 +7,7 @@ service firebase.storage {
     }
 
     function isOwner(uid) {
-      return isSignedIn() && request.auth.uid == uid;
+      return isSignedIn() && request.auth.uid == uid && !firestore.exists(/databases/(default)/documents/accountDeletionJobs/$(uid));
     }
 
     function isValidImage() {
@@ -25,14 +25,32 @@ service firebase.storage {
 
     match /users/{uid}/tmp/transcription/{recordingId} {
       allow read: if isOwner(uid);
-      allow create, update: if isOwner(uid) && isValidTranscriptionAudio();
-      allow delete: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidTranscriptionAudio();
+      allow delete: if false;
     }
 
-    match /users/{uid}/{allPaths=**} {
+    match /users/{uid}/{filename} {
       allow read: if isOwner(uid);
-      allow create, update: if isOwner(uid) && isValidImage();
-      allow delete: if isOwner(uid);
+      allow delete: if false;
+      allow create: if isOwner(uid) && isValidImage();
+    }
+    function itemActive(uid, itemId) {
+      return !firestore.exists(/databases/(default)/documents/users/$(uid)/itemDeletionJobs/$(itemId));
+    }
+    match /users/{uid}/items/{filename} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && itemActive(uid, filename.split('[.]')[0]) && isValidImage();
+      allow delete: if false;
+    }
+    match /users/{uid}/items/{itemId}/{filename}/{allPaths=**} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && itemActive(uid, itemId) && isValidImage();
+      allow delete: if false;
+    }
+    match /users/{uid}/{folder}/{allPaths=**} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && folder != 'items' && isValidImage();
+      allow delete: if false;
     }
 
     match /{allPaths=**} {

@@ -1,4 +1,4 @@
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { addDoc, collection, serverTimestamp } from "@/src/lib/mediaFirestore";
 
 import { db } from "@/src/lib/firebase";
 import type { WardrobeSuggestion } from "@/src/lib/wardrobeSuggestions";

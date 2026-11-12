@@ -10,7 +10,7 @@ import {
   query,
   setDoc,
   writeBatch,
-} from "firebase/firestore";
+} from "@/src/lib/mediaFirestore";
 
 import { db } from "@/src/lib/firebase";
 import { sanitizeAuraClientPayload } from "@/src/lib/auraHardening";

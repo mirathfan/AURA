@@ -1,3 +1,4 @@
+import { requireClientAiConsent } from "../privacy/consentClient";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { Alert } from "react-native";
 
@@ -815,6 +816,8 @@ export async function getProductRecommendationsForSuggestion(
   if (!frontendLiveSearchEnabled()) {
     return curatedFallback(suggestion, maxResults);
   }
+
+  try { await requireClientAiConsent(); } catch { return curatedFallback(suggestion, maxResults); }
 
   await trackSuggestionEvent({
     userId: options.userId,

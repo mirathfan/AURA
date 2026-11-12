@@ -7,7 +7,39 @@ service cloud.firestore {
     }
 
     function isOwner(uid) {
-      return isSignedIn() && request.auth.uid == uid;
+      return isSignedIn() && request.auth.uid == uid && !exists(/databases/$(database)/documents/accountDeletionJobs/$(uid));
+    }
+
+
+    function mediaUnlocked(uid) {
+      return !exists(/databases/$(database)/documents/users/$(uid)/mediaControl/cleanup);
+    }
+    function mediaSafeFields() { return ["status", "laundryStatus", "isFavorite", "wearCountSinceWash", "laundryUpdatedAt", "lastWornAt", "lastWornDate", "lastWashedAt", "lastWashedDate", "createdAt", "updatedAt", "deletedAt", "savedAt", "messageCount"]; }
+
+    function mediaSafeScalars(data) {
+      return (!data.keys().hasAny(['status']) || data.status in ['AVAILABLE', 'WORN', 'IN_LAUNDRY'])
+        && (!data.keys().hasAny(['laundryStatus']) || data.laundryStatus in ['clean', 'needs_wash', 'in_laundry'])
+        && (!data.keys().hasAny(['isFavorite']) || data.isFavorite is bool)
+        && (!data.keys().hasAny(['wearCountSinceWash']) || data['wearCountSinceWash'] == null || data['wearCountSinceWash'] is number || data['wearCountSinceWash'] is timestamp)
+        && (!data.keys().hasAny(['laundryUpdatedAt']) || data['laundryUpdatedAt'] == null || data['laundryUpdatedAt'] is number || data['laundryUpdatedAt'] is timestamp)
+        && (!data.keys().hasAny(['lastWornAt']) || data['lastWornAt'] == null || data['lastWornAt'] is number || data['lastWornAt'] is timestamp)
+        && (!data.keys().hasAny(['lastWornDate']) || data['lastWornDate'] == null || data['lastWornDate'] is number || data['lastWornDate'] is timestamp || (data['lastWornDate'] is string && data['lastWornDate'].matches('[0-9]{4}-[0-9]{2}-[0-9]{2}([T ][0-9:.Z+-]+)?')))
+        && (!data.keys().hasAny(['lastWashedAt']) || data['lastWashedAt'] == null || data['lastWashedAt'] is number || data['lastWashedAt'] is timestamp)
+        && (!data.keys().hasAny(['lastWashedDate']) || data['lastWashedDate'] == null || data['lastWashedDate'] is number || data['lastWashedDate'] is timestamp || (data['lastWashedDate'] is string && data['lastWashedDate'].matches('[0-9]{4}-[0-9]{2}-[0-9]{2}([T ][0-9:.Z+-]+)?')))
+        && (!data.keys().hasAny(['createdAt']) || data['createdAt'] == null || data['createdAt'] is number || data['createdAt'] is timestamp)
+        && (!data.keys().hasAny(['updatedAt']) || data['updatedAt'] == null || data['updatedAt'] is number || data['updatedAt'] is timestamp)
+        && (!data.keys().hasAny(['deletedAt']) || data['deletedAt'] == null || data['deletedAt'] is number || data['deletedAt'] is timestamp)
+        && (!data.keys().hasAny(['savedAt']) || data['savedAt'] == null || data['savedAt'] is number || data['savedAt'] is timestamp)
+        && (!data.keys().hasAny(['messageCount']) || data['messageCount'] == null || data['messageCount'] is number || data['messageCount'] is timestamp);
+    }
+    function mediaWriteAllowed(uid, target, permitPath) {
+      return mediaUnlocked(uid) && mediaSafeScalars(request.resource.data) && (
+        (resource == null && request.resource.data.keys().hasOnly(mediaSafeFields()))
+        || (resource != null && request.resource.data.diff(resource.data).affectedKeys().hasOnly(mediaSafeFields()))
+        || (exists(permitPath) && get(permitPath).data.target == target
+          && get(permitPath).data.until > request.time
+          && request.resource.data.diff(get(permitPath).data.projection).affectedKeys().hasOnly(mediaSafeFields()))
+      );
     }
 
     function validStatus(status) {
@@ -585,41 +617,72 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /accountDeletionJobs/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /releaseControl/{id} { allow read: if true; allow write: if false; }
+
     match /users/{uid} {
       allow read: if isOwner(uid);
-      allow create: if isOwner(uid) && validUserRootCreate(request.resource.data, uid);
-      allow update: if isOwner(uid) && validUserRootUpdate(request.resource.data, uid);
+      allow create: if mediaWriteAllowed(uid, '', /databases/$(database)/documents/users/$(uid)/mediaPermits/latest) && isOwner(uid) && validUserRootCreate(request.resource.data, uid);
+      allow update: if mediaWriteAllowed(uid, '', /databases/$(database)/documents/users/$(uid)/mediaPermits/latest) && isOwner(uid) && validUserRootUpdate(request.resource.data, uid);
       allow delete: if false;
 
-      match /items/{itemId} {
+      // Internal resumable work; only Admin SDK workers may read/write jobs.
+      match /wardrobeIndexJobs/{itemId} {
         allow read: if isOwner(uid);
-        allow create: if isOwner(uid) && validItemCreate(request.resource.data, uid);
-        allow update: if isOwner(uid) && validItemUpdate(request.resource.data, uid);
-        allow delete: if isOwner(uid);
+        allow write: if false;
+      }
+
+      match /aiConsentJobs/{jobId} {
+        allow read, write: if false;
+      }
+
+      match /privacy/{documentId} {
+        allow read: if isOwner(uid) && documentId == "aiConsent";
+        // Authenticated callable records the explicit decision and server timestamp.
+        allow write: if false;
+      }
+
+      match /itemDeletionJobs/{itemId} {
+        allow read, write: if false;
+      }
+
+      match /items/{itemId} {
+        function itemActive() {
+          return !exists(/databases/$(database)/documents/users/$(uid)/itemDeletionJobs/$(itemId));
+        }
+        allow read: if isOwner(uid);
+        allow create: if mediaWriteAllowed(uid, 'items' + '/' + itemId, /databases/$(database)/documents/users/$(uid)/items/$(itemId)/mediaPermits/latest) && isOwner(uid) && itemActive() && validItemCreate(request.resource.data, uid);
+        allow update: if mediaWriteAllowed(uid, 'items' + '/' + itemId, /databases/$(database)/documents/users/$(uid)/items/$(itemId)/mediaPermits/latest) && isOwner(uid) && itemActive() && validItemUpdate(request.resource.data, uid);
+        // The callable records the deletion fence in the same transaction.
+        allow delete: if false;
       }
 
       match /outfits/{dateKey} {
         allow read: if isOwner(uid);
-        allow create: if isOwner(uid) && validOutfitCreate(request.resource.data, uid);
-        allow update: if isOwner(uid) && validOutfitUpdate(request.resource.data, uid);
+        allow create: if mediaWriteAllowed(uid, 'outfits' + '/' + dateKey, /databases/$(database)/documents/users/$(uid)/outfits/$(dateKey)/mediaPermits/latest) && isOwner(uid) && validOutfitCreate(request.resource.data, uid);
+        allow update: if mediaWriteAllowed(uid, 'outfits' + '/' + dateKey, /databases/$(database)/documents/users/$(uid)/outfits/$(dateKey)/mediaPermits/latest) && isOwner(uid) && validOutfitUpdate(request.resource.data, uid);
         allow delete: if isOwner(uid);
       }
 
       match /threads/{threadId} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validThreadDoc(request.resource.data, uid);
+        allow create, update: if mediaWriteAllowed(uid, 'threads' + '/' + threadId, /databases/$(database)/documents/users/$(uid)/threads/$(threadId)/mediaPermits/latest) && isOwner(uid) && validThreadDoc(request.resource.data, uid);
         allow delete: if isOwner(uid);
 
         match /messages/{messageId} {
           allow read: if isOwner(uid);
-          allow create, update: if isOwner(uid) && validMessageDoc(request.resource.data, uid);
+          allow create, update: if mediaWriteAllowed(uid, 'threads' + '/' + threadId + '/' + 'messages' + '/' + messageId, /databases/$(database)/documents/users/$(uid)/threads/$(threadId)/messages/$(messageId)/mediaPermits/latest) && isOwner(uid) && validMessageDoc(request.resource.data, uid);
           allow delete: if isOwner(uid);
         }
       }
 
       match /ai/{docId} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow create, update: if mediaWriteAllowed(uid, 'ai' + '/' + docId, /databases/$(database)/documents/users/$(uid)/ai/$(docId)/mediaPermits/latest) && isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
         allow delete: if isOwner(uid);
       }
 
@@ -629,11 +692,11 @@ service cloud.firestore {
       }
 
       match /assistantProfile/{docId} {
-        allow read, write: if isOwner(uid) && (docId == "main" || docId == "behavior");
+        allow read, write: if (request.method in ['get', 'list', 'delete'] || mediaWriteAllowed(uid, 'assistantProfile' + '/' + docId, /databases/$(database)/documents/users/$(uid)/assistantProfile/$(docId)/mediaPermits/latest)) && isOwner(uid) && (docId == "main" || docId == "behavior");
       }
 
       match /profile/{docId} {
-        allow read, write: if isOwner(uid) && (
+        allow read, write: if (request.method in ['get', 'list', 'delete'] || mediaWriteAllowed(uid, 'profile' + '/' + docId, /databases/$(database)/documents/users/$(uid)/profile/$(docId)/mediaPermits/latest)) && isOwner(uid) && (
           docId == "styleProfile" ||
           docId == "learnedStyleMemory"
         );
@@ -641,65 +704,65 @@ service cloud.firestore {
 
       match /aiChats/{chatId} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validAiChatDoc(request.resource.data, uid);
+        allow create, update: if mediaWriteAllowed(uid, 'aiChats' + '/' + chatId, /databases/$(database)/documents/users/$(uid)/aiChats/$(chatId)/mediaPermits/latest) && isOwner(uid) && validAiChatDoc(request.resource.data, uid);
         allow delete: if isOwner(uid);
 
         match /messages/{messageId} {
           allow read: if isOwner(uid);
-          allow create, update: if isOwner(uid) && validAiChatMessageDoc(request.resource.data, uid);
+          allow create, update: if mediaWriteAllowed(uid, 'aiChats' + '/' + chatId + '/' + 'messages' + '/' + messageId, /databases/$(database)/documents/users/$(uid)/aiChats/$(chatId)/messages/$(messageId)/mediaPermits/latest) && isOwner(uid) && validAiChatMessageDoc(request.resource.data, uid);
           allow delete: if isOwner(uid);
         }
 
         match /sessionContext/{docId} {
-          allow read, write: if isOwner(uid) && docId == "current";
+          allow read, write: if (request.method in ['get', 'list', 'delete'] || mediaWriteAllowed(uid, 'aiChats' + '/' + chatId + '/' + 'sessionContext' + '/' + docId, /databases/$(database)/documents/users/$(uid)/aiChats/$(chatId)/sessionContext/$(docId)/mediaPermits/latest)) && isOwner(uid) && docId == "current";
         }
       }
 
       match /styleEvents/{eventId} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validStyleEventDoc(request.resource.data, uid);
+        allow create, update: if mediaWriteAllowed(uid, 'styleEvents' + '/' + eventId, /databases/$(database)/documents/users/$(uid)/styleEvents/$(eventId)/mediaPermits/latest) && isOwner(uid) && validStyleEventDoc(request.resource.data, uid);
         allow delete: if isOwner(uid);
       }
 
       match /savedLooks/{lookId} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validSavedLookDoc(request.resource.data, uid);
+        allow create, update: if mediaWriteAllowed(uid, 'savedLooks' + '/' + lookId, /databases/$(database)/documents/users/$(uid)/savedLooks/$(lookId)/mediaPermits/latest) && isOwner(uid) && validSavedLookDoc(request.resource.data, uid);
         allow delete: if isOwner(uid);
       }
 
       match /auraLooks/{lookId} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow create, update: if mediaWriteAllowed(uid, 'auraLooks' + '/' + lookId, /databases/$(database)/documents/users/$(uid)/auraLooks/$(lookId)/mediaPermits/latest) && isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
         allow delete: if isOwner(uid);
       }
 
       match /savedOutfits/{lookId} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow create, update: if mediaWriteAllowed(uid, 'savedOutfits' + '/' + lookId, /databases/$(database)/documents/users/$(uid)/savedOutfits/$(lookId)/mediaPermits/latest) && isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
         allow delete: if isOwner(uid);
       }
 
       match /outfitFeedback/{feedbackId} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow create, update: if mediaWriteAllowed(uid, 'outfitFeedback' + '/' + feedbackId, /databases/$(database)/documents/users/$(uid)/outfitFeedback/$(feedbackId)/mediaPermits/latest) && isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
         allow delete: if isOwner(uid);
       }
 
       match /commerceEvents/{eventId} {
         allow read: if isOwner(uid);
-        allow create: if isOwner(uid) && validCommerceEventDoc(request.resource.data, uid);
+        allow create: if mediaWriteAllowed(uid, 'commerceEvents' + '/' + eventId, /databases/$(database)/documents/users/$(uid)/commerceEvents/$(eventId)/mediaPermits/latest) && isOwner(uid) && validCommerceEventDoc(request.resource.data, uid);
         allow update, delete: if false;
       }
 
       match /shoppingRecommendationFeedback/{feedbackId} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validShoppingRecommendationFeedbackDoc(request.resource.data, uid);
+        allow create, update: if mediaWriteAllowed(uid, 'shoppingRecommendationFeedback' + '/' + feedbackId, /databases/$(database)/documents/users/$(uid)/shoppingRecommendationFeedback/$(feedbackId)/mediaPermits/latest) && isOwner(uid) && validShoppingRecommendationFeedbackDoc(request.resource.data, uid);
         allow delete: if isOwner(uid);
       }
 
       match /launchEvents/{eventId} {
         allow read: if isOwner(uid);
-        allow create: if isOwner(uid) && validLaunchEventDoc(request.resource.data, uid);
+        allow create: if mediaWriteAllowed(uid, 'launchEvents' + '/' + eventId, /databases/$(database)/documents/users/$(uid)/launchEvents/$(eventId)/mediaPermits/latest) && isOwner(uid) && validLaunchEventDoc(request.resource.data, uid);
         allow update, delete: if false;
       }
     }

@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "@/src/lib/mediaFirestore";
 
 import { db } from "./firebase";
 import {

@@ -44,6 +44,7 @@ const SETTINGS_GROUPS = [
     label: "ACCOUNT",
     rows: [
       { title: "Account", route: "/profile/account", summary: "account" },
+      { title: "Privacy & AI", route: "/privacy", summary: "privacy" },
     ],
   },
   {
@@ -273,6 +274,7 @@ export default function ProfileScreen() {
   const summaries = useMemo(
     () => ({
       account: accountSummary,
+      privacy: "Policy and AI sharing choices",
       savedOutfits: "View AURA outfits you saved for repeat wear.",
       bodyFit: formatBodyFitSummary(profile),
       defaultSizes: formatDefaultSizesSummary(profile),

@@ -1,3 +1,4 @@
+import { requireClientAiConsent } from "../privacy/consentClient";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
 import { buildClientProductLinkPreview, type ClientProductLinkPreview } from "@/src/lib/aura";
@@ -276,6 +277,7 @@ export function previewFromSafeHmClientFallback(
 }
 
 export async function previewProductLinkForCloset(url: string) {
+  await requireClientAiConsent();
   const functions = getFunctions(app);
   type ExtractProductRequest =
     {

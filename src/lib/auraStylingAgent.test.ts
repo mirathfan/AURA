@@ -1,4 +1,5 @@
 /* eslint-disable import/first */
+jest.mock("../privacy/consentClient", () => ({ requireClientAiConsent: jest.fn(async () => undefined) }));
 const mockApp = {};
 const mockAuth = { currentUser: { uid: "test-user" } as { uid: string } | null };
 const mockFunctionsRef = {};

@@ -1,3 +1,4 @@
+import { BETA_AI_FEATURES } from "@/shared/aiConsent";
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { Image } from "expo-image";
@@ -1048,7 +1049,7 @@ const ExtractedItemCard = React.memo(function ExtractedItemCard({
   const isEditedByAura = isGridCrop || isBboxLayoutCrop;
   const isOriginalFallback = item.extractionMethod === "original_crop_fallback";
   const canPolishAccessory =
-    isAccessory && item.polishAvailable !== false && !item.userPolished && !!item.cropImageUrl;
+    BETA_AI_FEATURES.aiPolish && isAccessory && item.polishAvailable !== false && !item.userPolished && !!item.cropImageUrl;
 
   return (
     <View

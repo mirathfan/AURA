@@ -1,3 +1,4 @@
+import { router } from "expo-router";
 import React from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View } from "react-native";
 
@@ -82,6 +83,7 @@ export function AuthScaffold({
             </AuraGlassCard>
 
             {footer ? <View style={{ gap: 10 }}>{footer}</View> : null}
+            <AuthInlineLink label="Privacy Policy" onPress={() => router.push("/privacy" as never)} />
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeScreen>

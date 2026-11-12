@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "@/src/lib/mediaFirestore";
 
 import type { ChatOutfit } from "@/src/components/ai/chatTypes";
 import { db } from "@/src/lib/firebase";

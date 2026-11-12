@@ -9,6 +9,7 @@
       "distribution": "internal"
     },
     "preview": {
+      "autoIncrement": true,
       "credentialsSource": "local",
       "distribution": "store",
       "env": {
@@ -16,6 +17,7 @@
       },
       "environment": "production",
       "ios": {
+        "image": "macos-sequoia-15.6-xcode-26.0",
         "resourceClass": "m-medium"
       }
     },
@@ -27,7 +29,17 @@
       },
       "environment": "production",
       "ios": {
+        "image": "macos-sequoia-15.6-xcode-26.0",
         "resourceClass": "m-medium"
+      }
+    },
+    "beta-simulator": {
+      "extends": "production",
+      "autoIncrement": false,
+      "distribution": "internal",
+      "ios": {
+        "simulator": true,
+        "buildConfiguration": "Release"
       }
     }
   },

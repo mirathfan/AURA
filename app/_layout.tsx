@@ -1,5 +1,8 @@
+import { ReleaseGate, useReleaseBlocker } from "../src/release/ReleaseGate";
+import { DeletionProvider, useAccountDeletion } from "../src/account/DeletionProvider";
+import AccountDeletionScreen from "../src/account/AccountDeletionScreen";
 import { DarkTheme, ThemeProvider } from "@react-navigation/native";
-import { router, Stack, useSegments } from "expo-router";
+import { router, Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { signOut } from "firebase/auth";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -14,10 +17,10 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
+import { AiConsentProvider } from "../src/privacy/AiConsentProvider";
 import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
 import { isVisionBackgroundRemovalAvailable } from "../src/bg/removeBackground";
-import { loadUserProfilePreferences } from "../src/lib/userProfile";
-import { getCachedProfilePreferences } from "../src/lib/localCache";
+import { useAuthRouting } from "../src/auth/useAuthRouting";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { Colors } from "@/constants/theme";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -46,8 +49,6 @@ const LOADING_MESSAGES = [
   "Calibrating your AURA...",
   "Almost ready...",
 ];
-
-type ProfileGateState = "idle" | "loading" | "onboarded" | "needs_onboarding" | "error";
 
 function BrandedLoadingScreen() {
   const reducedMotion = useReducedMotion();
@@ -148,70 +149,14 @@ function AuthGate() {
     loading,
     authCheckTimedOut,
     retryAuthCheck,
-    profileRevision,
     refreshProfile,
   } = useAuth();
-  const segments = useSegments();
-  const [profileState, setProfileState] = useState<ProfileGateState>("loading");
+  const { profileState, waiting, profileError, publicRoute } = useAuthRouting();
   const appOpenTrackedForUidRef = useRef<string | null>(null);
 
   useEffect(() => {
     void setSentryUserFromUid(user?.uid ?? null);
   }, [user?.uid]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (loading) return () => { cancelled = true; };
-
-    if (!user?.uid) {
-      setProfileState("idle");
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    setProfileState("loading");
-    void (async () => {
-      const cached = await getCachedProfilePreferences(user.uid).catch(() => null);
-      const cachedOnboarded = Boolean(cached?.data?.onboardingCompleted);
-      if (cachedOnboarded && !cancelled) {
-        setProfileState("onboarded");
-      }
-      try {
-        const profile = await loadUserProfilePreferences(user.uid);
-        if (cancelled) return;
-        setProfileState(profile.onboardingCompleted ? "onboarded" : "needs_onboarding");
-      } catch {
-        if (cancelled) return;
-        setProfileState(cachedOnboarded ? "onboarded" : "error");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loading, profileRevision, user?.uid]);
-
-  useEffect(() => {
-    if (loading || profileState === "loading" || profileState === "error") return;
-    const inAuthGroup = segments[0] === "(auth)";
-    const inOnboardingGroup = segments[0] === "(onboarding)";
-
-    if (!user && !inAuthGroup) {
-      router.replace("/(auth)/welcome");
-      return;
-    }
-
-    if (user && profileState === "needs_onboarding" && !inOnboardingGroup) {
-      router.replace("/(onboarding)");
-      return;
-    }
-
-    if (user && profileState === "onboarded" && (inAuthGroup || inOnboardingGroup)) {
-      router.replace("/(tabs)");
-    }
-  }, [loading, profileState, segments, user]);
 
   useEffect(() => {
     if (loading || profileState === "loading" || profileState === "error") return;
@@ -226,8 +171,15 @@ function AuthGate() {
     });
   }, [loading, profileState, user?.uid]);
 
-  if (loading && authCheckTimedOut) {
-    return (
+  const deletion = useAccountDeletion();
+  const release = useReleaseBlocker();
+  let blocker = null;
+  if (deletion.status && !publicRoute) {
+    blocker = <AccountDeletionScreen key={deletion.uid} />;
+  } else if (release && user && !publicRoute) {
+    blocker = <ReleaseGate reason={release} />;
+  } else if (loading && authCheckTimedOut && !publicRoute) {
+    blocker = (
       <AuthLoadTimeoutScreen
         onRetry={retryAuthCheck}
         onSignInAgain={() => {
@@ -238,17 +190,17 @@ function AuthGate() {
         }}
       />
     );
-  }
-
-  if (loading || (user && profileState === "loading")) {
-    return <BrandedLoadingScreen />;
-  }
-  if (user && profileState === "error") {
-    return <ProfileLoadErrorScreen onRetry={refreshProfile} />;
+  } else if (profileError) {
+    blocker = <ProfileLoadErrorScreen onRetry={refreshProfile} />;
+  } else if (waiting) {
+    blocker = <BrandedLoadingScreen />;
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <Stack
+      screenOptions={{ headerShown: false }}
+      screenLayout={({ children }) => blocker ?? children}
+    >
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -404,9 +356,13 @@ function RootLayout() {
         <ThemeProvider value={navigationTheme}>
           {firebaseReady ? (
             <AuthProvider>
-              <View style={{ flex: 1, backgroundColor: palette.background }}>
-                <AuthGate />
-              </View>
+              <DeletionProvider>
+              <AiConsentProvider>
+                <View style={{ flex: 1, backgroundColor: palette.background }}>
+                  <AuthGate />
+                </View>
+              </AiConsentProvider>
+            </DeletionProvider>
             </AuthProvider>
           ) : (
             <View style={{ flex: 1, backgroundColor: palette.background }}>

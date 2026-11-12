@@ -15,9 +15,9 @@ type Scrubbable =
 
 const SAFE_TAGS = ["app_version", "build_number", "platform", "environment"] as const;
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
-const URL_RE = /\bhttps?:\/\/[^\s"'<>)}\]]+/gi;
+const URL_RE = /\b[a-z][a-z0-9+.-]*:\/{1,3}[^\s"'<>)}\]]+/gi;
 const UID_KEY_RE = /^(uid|userId|user_id|firebaseUid|firebase_uid)$/i;
-const SECRET_KEY_RE = /(authorization|cookie|set-cookie|token|idToken|refreshToken|firebaseToken|authToken|apiKey|secret)/i;
+const SECRET_KEY_RE = /^(code)$|(authorization|cookie|set-cookie|token|idToken|refreshToken|firebaseToken|authToken|apiKey|secret|oobCode|authorizationCode|code_verifier|code_challenge|nonce|state)/i;
 const URL_KEY_RE = /(productUrl|sourceUrl|imageUrl|photoUrl|downloadUrl|url|uri|href|link)$/i;
 const USER_CONTENT_KEY_RE = /^(prompt|message|chatText|text|input|query|content)$/i;
 
@@ -48,7 +48,8 @@ function safeTags() {
 function scrubString(value: string) {
   return value
     .replace(EMAIL_RE, "[redacted-email]")
-    .replace(URL_RE, "[redacted-url]");
+    .replace(URL_RE, "[redacted-url]")
+    .replace(/\b(oobCode|code|state|nonce|id_token|access_token|refresh_token|code_verifier|code_challenge|apiKey)=[^\s&]+/gi, "$1=[redacted-secret]");
 }
 
 function hasEmailOrUrl(value: string) {

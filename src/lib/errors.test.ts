@@ -4,6 +4,12 @@ import {
 } from "@/src/lib/errors";
 
 describe("client error helpers", () => {
+  it("explains how to recover from account deletion requiring a fresh login", () => {
+    expect(getFriendlyErrorMessage({
+      code: "functions/failed-precondition",
+      details: { code: "REQUIRES_RECENT_LOGIN" },
+    })).toContain("sign out and sign back in");
+  });
   it("returns true for Firebase Functions resource-exhausted errors", () => {
     expect(isRateLimitError({ code: "functions/resource-exhausted" })).toBe(true);
   });
@@ -32,4 +38,10 @@ describe("client error helpers", () => {
       "Something went wrong. Please try again.",
     );
   });
+});
+
+it.each(["CLIENT_UPGRADE_REQUIRED", "MEDIA_BUSY", "MEDIA_RETIRED", "AI_MAINTENANCE"])("shows a safe actionable explanation for %s", (code) => {
+  const message = getFriendlyErrorMessage({ details: { code }, message: "secret-storage-token" });
+  expect(message).not.toContain("secret-storage-token");
+  expect(message).not.toBe("Something went wrong. Please try again.");
 });

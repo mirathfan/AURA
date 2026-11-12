@@ -6,7 +6,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
-} from "firebase/firestore";
+} from "@/src/lib/mediaFirestore";
 
 import { auth, db } from "./firebase";
 import {

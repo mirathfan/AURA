@@ -1,3 +1,6 @@
+import * as AppleAuthentication from "expo-apple-authentication";
+import { Platform } from "react-native";
+import { handleAppleCredentialRevoked } from "../auth/appleRevocation";
 import { User, onAuthStateChanged } from "firebase/auth";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
@@ -51,9 +54,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
         setAuthCheckTimedOut(false);
       },
-      (error) => {
+      () => {
         if (__DEV__) {
-          console.warn("[Auth] Session check failed", error);
+          console.warn("[Auth] Session check failed");
         }
         settled = true;
         clearTimeout(timeout);
@@ -67,6 +70,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       unsub();
     };
   }, [retryKey]);
+
+  useEffect(() => {
+    if (Platform.OS !== "ios" || !user?.providerData?.some((provider) => provider.providerId === "apple.com")) return;
+    const subscription = AppleAuthentication.addRevokeListener(() => { void handleAppleCredentialRevoked(user); });
+    return () => subscription.remove();
+  }, [user]);
 
   const retryAuthCheck = useCallback(() => {
     setRetryKey((value) => value + 1);

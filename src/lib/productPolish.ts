@@ -1,3 +1,4 @@
+import { requireClientAiConsent } from "../privacy/consentClient";
 import * as FileSystem from "expo-file-system/legacy";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
@@ -213,6 +214,7 @@ export async function runProductPolishForLocalImage(
   params: RunProductPolishParams
 ): Promise<ProductPolishLocalResult> {
   const source = await uploadProductPolishSource(params);
+  await requireClientAiConsent();
   const functions = getFunctions(app);
   const callable = httpsCallable<
     {

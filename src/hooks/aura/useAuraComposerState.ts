@@ -1,3 +1,4 @@
+import { requireClientAiConsent } from "../../privacy/consentClient";
 import type {
   SpeechErrorEvent,
   SpeechResultsEvent,
@@ -320,6 +321,8 @@ export function useAuraComposerState({ uid: _uid }: UseAuraComposerStateOptions)
         }
       }
 
+      await requireClientAiConsent();
+      if (!mountedRef.current) return;
       setVoiceListening(true);
       await voice.start(
         VOICE_LOCALE,

@@ -1,3 +1,4 @@
+import { BETA_AI_FEATURES } from "../../shared/aiConsent";
 import { doc, onSnapshot } from "firebase/firestore";
 import React from "react";
 
@@ -55,6 +56,7 @@ function normalizeRole(value: unknown): "standard" | "power" {
   return value === "power" ? "power" : "standard";
 }
 
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
@@ -72,9 +74,8 @@ function buildState(
 ): EarlyAccessFeatureState {
   const periodKey = currentPeriodKey();
   const betaRole = normalizeRole(userData.betaRole);
-  const featureAccess = asRecord(userData.featureAccess);
-  const enabled = featureAccess[featureKey] === true;
-  const allowed = betaRole === "power" && enabled;
+  const enabled = BETA_AI_FEATURES[featureKey];
+  const allowed = enabled;
   const limit = FEATURE_LIMITS[featureKey];
   const used = usageData.periodKey === periodKey
     ? Math.min(limit, numericUsed(usageData[FEATURE_USAGE_FIELDS[featureKey]]))

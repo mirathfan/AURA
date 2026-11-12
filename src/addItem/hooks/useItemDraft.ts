@@ -7,9 +7,10 @@ import {
   limit,
   orderBy,
   query,
+  runTransaction,
   setDoc,
   updateDoc,
-} from "firebase/firestore";
+} from "@/src/lib/mediaFirestore";
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Alert, LayoutAnimation, Platform, UIManager } from "react-native";
 
@@ -111,6 +112,9 @@ export function useItemDraft({
 
   const userEditedKeysRef = useRef<Set<string>>(new Set());
   const saveInFlightRef = useRef(false);
+  // A failed save may already have created the draft or uploaded its media.
+  // Keep retries in this mounted form session attached to the same item.
+  const pendingCreateIdRef = useRef<{ uid: string; session: string; id: string; initial?: Record<string, any> } | null>(null);
   const lastFinalizedSubmissionKeyRef = useRef("");
   const selectedCategory = category ?? Category.TOP;
 
@@ -503,6 +507,7 @@ export function useItemDraft({
       .trim()
       .toLowerCase();
     const canKickoffIngestion =
+      extractionIngestionStatus !== "consent_required" &&
       extractionIngestionStatus !== "processing" &&
       extractionIngestionStatus !== "done";
     const b = cleanBrandInput(brand);
@@ -544,10 +549,14 @@ export function useItemDraft({
 
       const draftItemId = extraction.state.draftItemId;
       const itemsRef = collection(db, "users", uid, "items");
+      if (!isEdit && !draftItemId &&
+          (pendingCreateIdRef.current?.uid !== uid || pendingCreateIdRef.current?.session !== formSessionKey)) {
+        pendingCreateIdRef.current = { uid, session: formSessionKey, id: doc(itemsRef).id };
+      }
       const itemRef =
         isEdit || draftItemId
           ? doc(db, "users", uid, "items", String(editItemId ?? draftItemId))
-          : doc(itemsRef);
+          : doc(db, "users", uid, "items", pendingCreateIdRef.current!.id);
       const effectiveBrand = b || UNBRANDED_LABEL;
 
       const payloadBase = {
@@ -773,7 +782,7 @@ export function useItemDraft({
       }
 
       const draftUpdateStartedAt = photoPipelineNow();
-      await setDoc(itemRef, {
+      const createPayload = {
         ...payload,
         photos: {
           originalUrl: nextPhoto.originalUrl ?? nextPhoto.photoUrl,
@@ -819,9 +828,42 @@ export function useItemDraft({
               },
             }
           : {}),
-      });
+      };
+      const pendingCreate = pendingCreateIdRef.current!;
+      const initial = pendingCreate.initial;
+      if (!initial) {
+        // Retain the attempted document before awaiting a potentially ambiguous result.
+        pendingCreate.initial = JSON.parse(JSON.stringify(createPayload));
+        await setDoc(itemRef, createPayload);
+      } else {
+        await runTransaction(db, async (transaction) => {
+          const current = await transaction.get(itemRef);
+          if (!current.exists()) {
+            // Transactional create: a concurrent writer forces a fresh read.
+            transaction.set(itemRef, { ...createPayload, createdAt: initial.createdAt });
+            return;
+          }
+          const persisted = current.data();
+          const conflict = () => Object.assign(new Error("The item changed while saving."), { code: "SAVE_RETRY_CONFLICT" });
+          if (persisted.isDraft !== false || persisted.draftState !== "ready" || persisted.itemLifecycleStatus === "deleted") throw conflict();
+          const patch: Record<string, unknown> = {};
+          // Creation defaults and lifecycle state are never replayed over an existing item.
+          const retained = new Set(["createdAt", "status", "wearCountSinceWash", "lastWornDate", "lastWashedDate", "lastWashedAt", "isDraft", "draftState", "ingestion", "updatedAt", "brandUpdatedAt"]);
+          for (const [key, desired] of Object.entries(createPayload)) {
+            if (retained.has(key) || JSON.stringify(desired) === JSON.stringify(initial[key])) continue;
+            if (JSON.stringify(persisted[key]) !== JSON.stringify(initial[key]) && JSON.stringify(persisted[key]) !== JSON.stringify(desired)) throw conflict();
+            patch[key] = desired;
+          }
+          if (Object.keys(patch).length) {
+            patch.updatedAt = Date.now();
+            if ("brand" in patch) patch.brandUpdatedAt = createPayload.brandUpdatedAt;
+            transaction.update(itemRef, patch);
+          }
+        });
+      }
 
       lastFinalizedSubmissionKeyRef.current = submissionKey;
+      pendingCreateIdRef.current = null;
       photo.actions.logPhotoPipelineEvent?.(traceId, "draft_updated", "success", {
         mode: "new_create",
         itemId: itemRef.id,
@@ -880,8 +922,10 @@ export function useItemDraft({
         },
       });
       Alert.alert(
-        "Error",
-        isEdit ? "Failed to update item." : "Failed to add item."
+        e?.code === "SAVE_RETRY_CONFLICT" ? "Item changed" : "Error",
+        e?.code === "SAVE_RETRY_CONFLICT"
+          ? "Your earlier save may have completed, but this item has changed. Open it from your closet to review before saving again."
+          : isEdit ? "Failed to update item." : "Failed to add item."
       );
     } finally {
       if (__DEV__) {
@@ -903,6 +947,7 @@ export function useItemDraft({
     buildUserEditMetadata,
     category,
     editItemId,
+    formSessionKey,
     extractionRef,
     fit,
     isEdit,
@@ -936,6 +981,7 @@ export function useItemDraft({
     void (async () => {
       try {
         lastFinalizedSubmissionKeyRef.current = "";
+        pendingCreateIdRef.current = null;
         resetDraftState();
         photoRef.current?.actions?.resetPhotoState?.();
         extractionRef.current?.actions?.resetExtractionState?.();

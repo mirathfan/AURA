@@ -1,6 +1,6 @@
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Crypto from "expo-crypto";
-import { OAuthProvider, getAdditionalUserInfo, signInWithCredential } from "firebase/auth";
+import { OAuthProvider, getAdditionalUserInfo, signInWithCredential, reauthenticateWithCredential, type User } from "firebase/auth";
 
 import { auth } from "@/src/lib/firebase";
 import { saveNewUserProfile } from "@/src/auth/userProfile";
@@ -64,4 +64,18 @@ export async function signInWithApple(): Promise<void> {
       isNewUser,
     },
   });
+}
+
+// Reauthentication (not sign-in) binds the native Apple result to the current
+// Firebase account. A linked account is checked even if login used Google/email.
+export async function authorizeAppleAccountDeletion(user: User): Promise<string> {
+  const rawNonce = createRawNonce();
+  const nonce = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, rawNonce);
+  const credential = await AppleAuthentication.signInAsync({ requestedScopes: [], nonce });
+  if (auth.currentUser?.uid !== user.uid) throw new Error("Account changed. Start again.");
+  if (!credential.identityToken || !credential.authorizationCode) throw new Error("Fresh Apple authorization is unavailable.");
+  const result = await reauthenticateWithCredential(user, new OAuthProvider("apple.com").credential({ idToken: credential.identityToken, rawNonce }));
+  if (result.user.uid !== user.uid || auth.currentUser?.uid !== user.uid) throw new Error("Account changed. Start again.");
+  await user.getIdToken(true);
+  return credential.authorizationCode;
 }

@@ -4,6 +4,7 @@ import { act, render, waitFor } from "@testing-library/react-native";
 
 import { usePhotoStep } from "./usePhotoStep";
 import { runProductPolishForLocalImage } from "../../lib/productPolish";
+import { removeBackground } from "../../bg/removeBackground";
 
 const mockRunProductPolishForLocalImage = runProductPolishForLocalImage as jest.Mock;
 
@@ -248,6 +249,29 @@ describe("usePhotoStep AI Polish flow", () => {
     expect(mockRunProductPolishForLocalImage).not.toHaveBeenCalled();
     expect(harness.latest.state.pendingActiveImageVariant).toBe("original");
     expect(harness.latest.state.pendingRefinedPhotoUri).toBeNull();
+  });
+
+  it("keeps photo intake and background removal available when beta polishing is disabled", async () => {
+    mockEarlyAccessState = {
+      ...mockEarlyAccessState,
+      enabled: false,
+      allowed: false,
+      remaining: 0,
+    };
+    const harness = createHarness();
+    await pickPhoto(harness);
+
+    expect(removeBackground).toHaveBeenCalled();
+    expect(harness.latest.state.pendingActiveImageVariant).toBe("original");
+    expect(harness.latest.state.pendingNormalizedPreviewUri).toBe("file://preview.png");
+
+    await act(async () => {
+      await harness.latest.actions.polishProductPhoto();
+    });
+
+    expect(mockRunProductPolishForLocalImage).not.toHaveBeenCalled();
+    expect(harness.latest.state.pendingRefinedPhotoUri).toBeNull();
+    expect(harness.latest.state.pendingNormalizedPreviewUri).toBe("file://preview.png");
   });
 
   it("calls product polish only after the explicit polish action", async () => {

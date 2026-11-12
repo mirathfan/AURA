@@ -1,7 +1,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
-import { doc, updateDoc } from "firebase/firestore";
+import { doc, updateDoc } from "@/src/lib/mediaFirestore";
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Alert, Image as RNImage, Platform } from "react-native";
 

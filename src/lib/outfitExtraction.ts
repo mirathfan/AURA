@@ -1,4 +1,5 @@
-import { doc, writeBatch } from "firebase/firestore";
+import { requireClientAiConsent } from "../privacy/consentClient";
+import { doc, writeBatch } from "@/src/lib/mediaFirestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
@@ -168,6 +169,7 @@ export async function uploadOutfitPhotoForExtraction(params: UploadOutfitPhotoPa
 }
 
 export async function extractOutfitItems(params: ExtractOutfitItemsParams) {
+  await requireClientAiConsent();
   const functions = getFunctions(app);
   const callable = httpsCallable<ExtractOutfitItemsParams, ExtractOutfitItemsResponse>(
     functions,
@@ -187,6 +189,7 @@ export async function extractOutfitItems(params: ExtractOutfitItemsParams) {
 }
 
 export async function reconstructOutfitLayout(params: ReconstructOutfitLayoutParams) {
+  await requireClientAiConsent();
   logOutfitLayoutClient("layout_reconstruction_started", {
     traceId: params.traceId,
     hasImageUrl: !!params.imageUrl,
@@ -216,6 +219,7 @@ export async function reconstructOutfitLayout(params: ReconstructOutfitLayoutPar
 }
 
 export async function polishExtractedAccessory(params: PolishExtractedAccessoryParams) {
+  await requireClientAiConsent();
   logOutfitExtractionClient("accessory_polish_requested", {
     traceId: params.traceId,
     itemTempId: params.itemTempId,

@@ -215,6 +215,7 @@ export function getRefineRequestKey(uri: string, value: number) {
 export function normalizeIngestionStatus(value: unknown) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (
+    normalized === "consent_required" ||
     normalized === "pending" ||
     normalized === "processing" ||
     normalized === "done" ||

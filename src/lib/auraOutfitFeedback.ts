@@ -7,7 +7,7 @@ import {
   orderBy,
   query,
   setDoc,
-} from "firebase/firestore";
+} from "@/src/lib/mediaFirestore";
 
 import { auth, db } from "@/src/lib/firebase";
 import {

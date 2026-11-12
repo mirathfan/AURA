@@ -3,6 +3,7 @@ import { render } from "@testing-library/react-native";
 
 import { AuthInput } from "./AuthScaffold";
 
+jest.mock("expo-router", () => ({ router: { push: jest.fn() } }));
 jest.mock("@/src/hooks/useAppTheme", () => ({
   useAppTheme: () => ({
     colors: {

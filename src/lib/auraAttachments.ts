@@ -1,6 +1,6 @@
 import * as FileSystem from "expo-file-system/legacy";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { addDoc, collection, doc, setDoc, updateDoc } from "firebase/firestore";
+import { addDoc, collection, doc, setDoc, updateDoc } from "@/src/lib/mediaFirestore";
 
 import type { ChatAttachment, ChatAudioAttachment, ChatImageAttachment } from "@/src/components/ai/chatTypes";
 import { removeBackground } from "@/src/bg/removeBackground";

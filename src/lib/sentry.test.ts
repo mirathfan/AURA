@@ -71,3 +71,13 @@ describe("scrubSentryEvent", () => {
     expect(event.user).toEqual({ id: "anon_1234567890abcdef" });
   });
 });
+
+it("scrubs reset and OAuth material in custom-scheme URLs and structured parameters", () => {
+  const event = scrubSentryEvent({
+    message: "callback com.googleusercontent.apps.123:/oauthredirect?code=private-code&state=private-state",
+    extra: { oobCode: "private-reset", code: "private-code", nonce: "private-nonce", state: "private-state" },
+    breadcrumbs: [{ message: "received aura://forgot-password?oobCode=private-reset", data: { code_verifier: "private-verifier" } }],
+    exception: { values: [{ value: "Rejected oobCode=private-reset&state=private-state" }] },
+  });
+  expect(JSON.stringify(event)).not.toContain("private-");
+});

@@ -4,6 +4,9 @@ import React from "react";
 
 import { AuthProvider, useAuth } from "./AuthContext";
 
+jest.mock("../lib/storage", () => ({ Storage: { clearUserScopedData: jest.fn(async () => undefined) } }));
+jest.mock("expo-apple-authentication", () => ({ addRevokeListener: jest.fn(() => ({ remove: jest.fn() })) }));
+
 jest.mock("firebase/auth", () => ({
   onAuthStateChanged: jest.fn(),
 }));

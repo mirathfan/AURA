@@ -10,7 +10,7 @@ import {
   startAfter,
   type DocumentSnapshot,
   type Unsubscribe,
-} from "firebase/firestore";
+} from "@/src/lib/mediaFirestore";
 import { Alert } from "react-native";
 
 import {

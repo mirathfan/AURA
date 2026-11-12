@@ -1,6 +1,8 @@
 import { GoogleSignin } from "@react-native-google-signin/google-signin";
 import { GoogleAuthProvider, getAdditionalUserInfo, signInWithCredential } from "firebase/auth";
 
+import { withGoogleSignInSession } from "./googleSession";
+
 import { saveNewUserProfile } from "@/src/auth/userProfile";
 import { trackLaunchEvent } from "@/src/lib/analytics";
 import { auth } from "@/src/lib/firebase";
@@ -14,7 +16,11 @@ export function configureGoogleSignIn(): void {
   });
 }
 
-export async function signInWithGoogle(): Promise<void> {
+export function signInWithGoogle(): Promise<void> {
+  return withGoogleSignInSession(completeGoogleSignIn);
+}
+
+async function completeGoogleSignIn(): Promise<void> {
   await GoogleSignin.hasPlayServices({
     showPlayServicesUpdateDialog: true,
   });
@@ -62,9 +68,9 @@ export async function signOutGoogle(): Promise<void> {
       await GoogleSignin.revokeAccess();
       await GoogleSignin.signOut();
     }
-  } catch (error) {
+  } catch {
     if (__DEV__) {
-      console.log("[GoogleAuth] Sign out error:", error instanceof Error ? error.message : String(error));
+      console.log("[GoogleAuth] Sign out failed.");
     }
   }
 }

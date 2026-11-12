@@ -1,3 +1,5 @@
+import { ensureUploadItem } from "./itemUploadLifecycle";
+import { randomUUID } from "expo-crypto";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { storage } from "./firebase";
 import { optimizeImageForUpload } from "./imageOptimization";
@@ -121,6 +123,7 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
   });
 
   try {
+    await ensureUploadItem(uid, itemId);
     const displayImage = await optimizeImageForUpload({
       uri: localUri,
       width: originalWidth,
@@ -129,7 +132,9 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     });
     const primaryBlob = await blobFromFileUri(displayImage.uri);
 
-    const suffix = imageId ? `/${imageId}` : "";
+    // Never overwrite an image still referenced by a saved/duplicate item or
+    // a newer upload. Each attempt gets its own immutable object namespace.
+    const suffix = `/uploads/${randomUUID()}/${imageId || "primary"}`;
     const storagePath = `users/${uid}/items/${itemId}${suffix}.jpg`;
     const fileRef = ref(storage, storagePath);
     await uploadBytes(fileRef, primaryBlob, {

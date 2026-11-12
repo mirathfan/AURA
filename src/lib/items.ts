@@ -12,7 +12,7 @@ import {
   updateDoc,
   where,
   writeBatch,
-} from "firebase/firestore";
+} from "@/src/lib/mediaFirestore";
 import { Alert } from "react-native";
 
 import { db } from "./firebase";
@@ -57,7 +57,7 @@ export const LAUNDRY_STATUS_LABELS: Record<LaundryStatus, string> = {
   needs_wash: "Needs wash",
   in_laundry: "In laundry",
 };
-export type IngestionStatus = "pending" | "processing" | "done" | "failed";
+export type IngestionStatus = "pending" | "processing" | "done" | "failed" | "consent_required";
 export type DraftState = "draft" | "awaiting_confirmation" | "photo_uploaded" | "ingesting" | "ready" | "failed" | "cancelled";
 export type ItemLifecycleStatus =
   | "candidate"
@@ -235,6 +235,7 @@ export function getIngestionStatus(
     .trim()
     .toLowerCase();
   if (
+    raw === "consent_required" ||
     raw === "pending" ||
     raw === "processing" ||
     raw === "done" ||
