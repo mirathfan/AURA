@@ -13,6 +13,7 @@ import {
   withTimeout,
 } from "@/src/lib/auraHardening";
 import { getAuraAgentEnabledFlagValue, isAuraAgentEnabledFlag } from "@/src/lib/auraAgentRouteDiagnostics";
+import { getAuraAgentWeatherContext, localDateKey } from "@/src/lib/auraAgentWeather";
 import type {
   AuraOutfitWeatherContext,
   AuraOutfitWeatherWarning,
@@ -291,6 +292,50 @@ export function isAuraAgentEnabled() {
   return isAuraAgentEnabledFlag();
 }
 
+function cleanTemperature(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > -80 && value < 140
+    ? Math.round(value)
+    : undefined;
+}
+
+function cleanWeatherContext(value: AuraAgentRequest["weatherContext"]): AuraAgentRequest["weatherContext"] {
+  if (!value || typeof value !== "object") return undefined;
+  const tempF = cleanTemperature(value.tempF);
+  const highF = cleanTemperature(value.highF);
+  const lowF = cleanTemperature(value.lowF);
+  const condition = value.condition ? cleanText(value.condition, 60) : "";
+  const context = {
+    ...(tempF !== undefined ? { tempF } : {}),
+    ...(highF !== undefined ? { highF } : {}),
+    ...(lowF !== undefined ? { lowF } : {}),
+    ...(condition ? { condition } : {}),
+  };
+  return Object.keys(context).length ? context : undefined;
+}
+
+function needsLiveOutfitContext(mode: AuraAgentRequest["mode"]) {
+  return mode !== "feedback" && mode !== "explain_outfit";
+}
+
+// Outfit requests carry today's date and, when it is quickly available, the
+// weather. Callers that already supply either keep their own values.
+async function withLiveOutfitContext(input: AuraAgentRequest): Promise<AuraAgentRequest> {
+  if (!needsLiveOutfitContext(input.mode)) return input;
+  let weatherContext = input.weatherContext;
+  if (!weatherContext && !input.weather) {
+    try {
+      weatherContext = await getAuraAgentWeatherContext();
+    } catch {
+      weatherContext = undefined;
+    }
+  }
+  return {
+    ...input,
+    localDate: input.localDate ?? localDateKey(),
+    ...(weatherContext ? { weatherContext } : {}),
+  };
+}
+
 export function buildAuraAgentCallablePayload(input: AuraAgentRequest): AuraAgentRequest {
   const count = Number(input.count);
   const includeDiagnostics = __DEV__ ? input.includeDiagnostics ?? true : false;
@@ -300,6 +345,8 @@ export function buildAuraAgentCallablePayload(input: AuraAgentRequest): AuraAgen
     count: Number.isFinite(count) ? Math.max(1, Math.min(5, Math.round(count))) : undefined,
     occasion: input.occasion ? cleanText(input.occasion, 160) : undefined,
     weather: input.weather ? cleanText(input.weather, 160) : undefined,
+    weatherContext: cleanWeatherContext(input.weatherContext),
+    localDate: /^\d{4}-\d{2}-\d{2}$/.test(String(input.localDate ?? "")) ? input.localDate : undefined,
     formality: input.formality,
     preferredColors: cleanStringList(input.preferredColors),
     requiredColors: cleanStringList(input.requiredColors),
@@ -447,7 +494,7 @@ export async function runAuraStylingAgentClient(
     throw authError;
   }
 
-  const payload = buildAuraAgentCallablePayload(input);
+  const payload = buildAuraAgentCallablePayload(await withLiveOutfitContext(input));
   const timeoutMs = Math.max(1, options.timeoutMs ?? AURA_AGENT_DEFAULT_TIMEOUT_MS);
   devAgentLog("request payload", {
     payload,

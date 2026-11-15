@@ -87,6 +87,11 @@ export function getAgentDisplayMessage(agentResponse?: AuraAgentResponse | null)
     return compactText(agentResponse?.message) || "I couldn't find a complete outfit yet.";
   }
 
+  // A reply written by the stylist model for the first outfit wins over the
+  // neutral count-based template.
+  const stylistMessage = agentResponse?.messageSource === "stylist" ? compactText(agentResponse.message) : "";
+  if (stylistMessage) return stylistMessage;
+
   if (
     Number.isFinite(requestedCount) &&
     requestedCount > returnedCount &&

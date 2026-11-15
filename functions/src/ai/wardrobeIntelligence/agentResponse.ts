@@ -110,6 +110,7 @@ function buildMessage(state: AuraStylingAgentState): string {
   }
   const count = state.outfits?.length ?? 0;
   if (!count) return "I could not generate an outfit from the current closet context.";
+  if (state.stylistMessage) return state.stylistMessage;
   const lead = state.outfits?.[0]?.title ?? "your first outfit";
   return count === 1
     ? `I found one closet-based option: ${lead}.`
@@ -185,6 +186,7 @@ export function buildAgentResponse(state: AuraStylingAgentState): AuraStylingAge
     mode: state.intent.mode,
     intent: state.intent,
     message: buildMessage(state),
+    messageSource: state.stylistMessage && state.outfits?.length ? "stylist" : "template",
     suggestedActions: suggestedActions(state),
     ...(state.input?.count ? {requestedCount: state.input.count} : {}),
     ...(state.outfits ? { outfits: state.outfits } : {}),

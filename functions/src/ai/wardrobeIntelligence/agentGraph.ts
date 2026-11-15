@@ -48,6 +48,7 @@ const AuraAgentStateAnnotation = Annotation.Root({
   validationErrors: Annotation<AuraStylingAgentState["validationErrors"]>(),
   validationWarnings: Annotation<AuraStylingAgentState["validationWarnings"]>(),
   repaired: Annotation<AuraStylingAgentState["repaired"]>(),
+  stylistMessage: Annotation<AuraStylingAgentState["stylistMessage"]>(),
   feedbackResult: Annotation<AuraStylingAgentState["feedbackResult"]>(),
   response: Annotation<AuraStylingAgentState["response"]>(),
   diagnostics: Annotation<AuraStylingAgentDiagnostics>(),
@@ -78,6 +79,7 @@ const STATE_KEYS: AgentStateKey[] = [
   "validationErrors",
   "validationWarnings",
   "repaired",
+  "stylistMessage",
   "feedbackResult",
   "response",
 ];

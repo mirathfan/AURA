@@ -1,4 +1,6 @@
 import { HttpsError } from "firebase-functions/v2/https";
+import { loadAuraUserProfile } from "../../shared/loadAuraUserProfile";
+import { pickOutfitUserPreferences, type OutfitUserPreferences } from "./outfitSignals";
 import { classifyAuraStylingAgentIntent, resolveRequestedOutfitCount } from "./agentIntent";
 import {
   buildAgentResponse,
@@ -52,7 +54,9 @@ export type AuraAgentDeps = RetrieveOutfitContextDeps & RetrieveStyleMemoryDeps 
     validationErrors: string[];
     validationWarnings: OutfitValidationWarning[];
     repaired: boolean;
+    stylistMessage?: string;
   }>;
+  loadUserPreferences?: (uid: string) => Promise<OutfitUserPreferences | null>;
   recordFeedback?: (
     uid: string,
     input: {
@@ -202,6 +206,8 @@ function outfitInputFromState(state: AuraStylingAgentState): NormalizedOutfitGen
       previousOutfitField(state, "occasion") ||
       selectedOutfitField(state, "occasion"),
     weather: state.request.weather || state.intent.constraints.weather,
+    weatherContext: state.request.weatherContext,
+    localDate: state.request.localDate,
     formality: nonAnyFormality(state.request.formality) ||
       nonAnyFormality(state.intent.constraints.formality) ||
       nonAnyFormality(previousOutfitField(state, "formality")) ||
@@ -216,6 +222,16 @@ function outfitInputFromState(state: AuraStylingAgentState): NormalizedOutfitGen
     includeDiagnostics: state.request.includeDiagnostics === true,
     useStyleMemory: state.request.useStyleMemory !== false,
   });
+}
+
+// Stated preferences improve the outfit but are never required to produce one.
+async function safeLoadUserPreferences(uid: string, deps: AuraAgentDeps): Promise<OutfitUserPreferences | null> {
+  try {
+    if (deps.loadUserPreferences) return await deps.loadUserPreferences(uid);
+    return pickOutfitUserPreferences(await loadAuraUserProfile(uid));
+  } catch {
+    return null;
+  }
 }
 
 export const classifyIntentNode: AgentNode = (state) => ({
@@ -284,12 +300,17 @@ export const retrieveStyleMemoryNode: AgentNode = async (state, deps) => {
 
 export const retrieveOutfitContextNode: AgentNode = async (state, deps) => {
   const input = state.input ?? outfitInputFromState(state);
-  const context = deps.retrieveOutfitContext
-    ? await deps.retrieveOutfitContext(state.uid, input, state)
-    : await retrieveOutfitGenerationContext(state.uid, input, deps);
-  const contextWithMemory: OutfitGenerationContext = state.styleMemory
-    ? { ...context, styleMemory: outfitStyleMemoryContextFromResponse(state.styleMemory) }
-    : context;
+  const [context, userPreferences] = await Promise.all([
+    deps.retrieveOutfitContext
+      ? deps.retrieveOutfitContext(state.uid, input, state)
+      : retrieveOutfitGenerationContext(state.uid, input, deps),
+    safeLoadUserPreferences(state.uid, deps),
+  ]);
+  const contextWithMemory: OutfitGenerationContext = {
+    ...context,
+    ...(state.styleMemory ? { styleMemory: outfitStyleMemoryContextFromResponse(state.styleMemory) } : {}),
+    ...(userPreferences ? { userPreferences } : {}),
+  };
   assertMinimumContext(contextWithMemory);
   return {
     ...state,
@@ -316,6 +337,7 @@ export const generateOutfitsNode: AgentNode = async (state, deps) => {
     validationErrors: generated.validationErrors,
     validationWarnings: generated.validationWarnings,
     repaired: generated.repaired,
+    stylistMessage: generated.stylistMessage,
     diagnostics: {
       ...state.diagnostics,
       validationErrors: generated.validationErrors,

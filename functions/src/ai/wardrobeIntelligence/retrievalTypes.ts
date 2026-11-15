@@ -52,6 +52,10 @@ export type WardrobeRetrievalResult = {
   embeddingTextPreview: string | null;
   status: string | null;
   itemLifecycleStatus: string | null;
+  laundryState?: "clean" | "needs_wash" | "in_laundry";
+  daysSinceWorn?: number | null;
+  wearCountSinceWash?: number | null;
+  pattern?: string;
 };
 
 export type WardrobeRetrievalCategoryBuckets = Record<

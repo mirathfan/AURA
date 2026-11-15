@@ -1,4 +1,9 @@
 import type { WardrobeRetrievalCategoryBucket, WardrobeRetrievalFormality } from "./retrievalTypes";
+import type {
+  OutfitLaundryState,
+  OutfitUserPreferences,
+  OutfitWeatherContext,
+} from "./outfitSignals";
 
 export type OutfitRole =
   | "top"
@@ -24,6 +29,8 @@ export type OutfitGenerationInput = {
   count?: number;
   occasion?: string;
   weather?: string;
+  weatherContext?: OutfitWeatherContext;
+  localDate?: string;
   formality?: WardrobeRetrievalFormality;
   preferredColors?: string[];
   requiredColors?: string[];
@@ -41,6 +48,8 @@ export type NormalizedOutfitGenerationInput = {
   count: number;
   occasion?: string;
   weather?: string;
+  weatherContext?: OutfitWeatherContext;
+  localDate?: string;
   formality: WardrobeRetrievalFormality;
   preferredColors: string[];
   requiredColors: string[];
@@ -94,6 +103,10 @@ export type OutfitCandidate = {
   aiMetadata: Record<string, unknown>;
   embeddingTextPreview: string | null;
   status: string | null;
+  laundryState?: OutfitLaundryState;
+  daysSinceWorn?: number | null;
+  wearCountSinceWash?: number | null;
+  pattern?: string;
 };
 
 export type OutfitCandidateBuckets = Record<OutfitRole, OutfitCandidate[]>;
@@ -102,7 +115,10 @@ export type OutfitGenerationContext = {
   retrievalPlan: OutfitRetrievalPlan;
   candidates: OutfitCandidateBuckets;
   styleMemory?: OutfitStyleMemoryContext | null;
+  userPreferences?: OutfitUserPreferences | null;
   diagnostics: {
+    laundryExcludedCount?: number;
+    rotationExcludedCount?: number;
     candidateLimitPerCategory: number;
     rawLimitPerCategory: number;
     missingRequiredRoles: OutfitRole[];
@@ -181,6 +197,7 @@ export type GeneratedOutfit = {
 
 export type GeneratedOutfitPayload = {
   outfits: GeneratedOutfit[];
+  stylistMessage?: string;
 };
 
 export type OutfitScoreBreakdown = {

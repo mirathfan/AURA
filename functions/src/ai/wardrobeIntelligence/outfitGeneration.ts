@@ -5,6 +5,7 @@ import { outfitGenerationConfig } from "./config";
 import {
   buildOutfitGenerationDeveloperPrompt,
   buildOutfitGenerationUserPrompt,
+  flattenOutfitCandidates,
 } from "./outfitPrompt";
 import { normalizeOutfitRoleAlias } from "./outfitRole";
 import type {
@@ -99,13 +100,35 @@ export function parseGeneratedOutfitPayload(value: unknown): GeneratedOutfitPayl
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return { outfits: [] };
   }
+  const stylistMessage = text((payload as Record<string, unknown>).stylistMessage).replace(/\s+/g, " ");
   const outfits = Array.isArray((payload as Record<string, unknown>).outfits)
     ? ((payload as Record<string, unknown>).outfits as unknown[]).flatMap((entry) => {
       const outfit = generatedOutfitFromUnknown(entry);
       return outfit ? [outfit] : [];
     })
     : [];
-  return { outfits };
+  return { outfits, ...(stylistMessage ? { stylistMessage } : {}) };
+}
+
+const MAX_STYLIST_MESSAGE_LENGTH = 280;
+
+// The model's reply is only shown when it still describes the outfit the user
+// will see first. Anything doubtful falls back to the neutral template.
+export function resolveStylistMessage(args: {
+  message: string | undefined;
+  firstGenerated: GeneratedOutfit | undefined;
+  firstReturned: { items: { itemId: string }[] } | undefined;
+  candidateItemIds: string[];
+}): string | undefined {
+  const message = text(args.message).replace(/\s+/g, " ");
+  if (!message || message.length > MAX_STYLIST_MESSAGE_LENGTH) return undefined;
+  if (!args.firstGenerated || !args.firstReturned) return undefined;
+  const generatedIds = args.firstGenerated.items.map((item) => item.itemId).sort().join("|");
+  const returnedIds = args.firstReturned.items.map((item) => item.itemId).sort().join("|");
+  if (!generatedIds || generatedIds !== returnedIds) return undefined;
+  if (args.candidateItemIds.some((itemId) => itemId.length >= 6 && message.includes(itemId))) return undefined;
+  if (/[{}[\]<>]|https?:\/\//i.test(message)) return undefined;
+  return message;
 }
 
 function outfitSchema(maxOutfits: number) {
@@ -113,6 +136,7 @@ function outfitSchema(maxOutfits: number) {
     type: "object",
     additionalProperties: false,
     properties: {
+      stylistMessage: { type: "string" },
       outfits: {
         type: "array",
         minItems: 1,
@@ -167,7 +191,7 @@ function outfitSchema(maxOutfits: number) {
         },
       },
     },
-    required: ["outfits"],
+    required: ["stylistMessage", "outfits"],
   };
 }
 
@@ -264,6 +288,7 @@ export async function generateValidatedOutfitsFromContext(
   validationErrors: string[];
   validationWarnings: OutfitValidationWarning[];
   repaired: boolean;
+  stylistMessage?: string;
 }> {
   const config = outfitGenerationConfig();
   const client = options.client ?? defaultClient();
@@ -363,10 +388,20 @@ export async function generateValidatedOutfitsFromContext(
     });
   }
 
+  const outfits = buildValidatedOutfitResponse(validOutfits, context, input).slice(0, input.count);
+  const stylistMessage = repaired || invalidOutfits.length
+    ? undefined
+    : resolveStylistMessage({
+      message: first.stylistMessage,
+      firstGenerated: validOutfits[0],
+      firstReturned: outfits[0],
+      candidateItemIds: flattenOutfitCandidates(context).map((candidate) => candidate.itemId),
+    });
   return {
-    outfits: buildValidatedOutfitResponse(validOutfits, context, input).slice(0, input.count),
+    outfits,
     validationErrors,
     validationWarnings,
     repaired,
+    ...(stylistMessage ? { stylistMessage } : {}),
   };
 }

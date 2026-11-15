@@ -4,6 +4,31 @@ import type {
   OutfitGenerationContext,
   OutfitRole,
 } from "./outfitTypes";
+import { outfitDateContext, summarizeOutfitWeather } from "./outfitSignals";
+
+function metadataText(value: unknown): string | null {
+  const text = String(value ?? "").trim();
+  return text && text.toLowerCase() !== "unknown" ? text : null;
+}
+
+function metadataList(value: unknown, limit = 4): string[] {
+  return Array.isArray(value)
+    ? value.map((entry) => String(entry ?? "").trim()).filter(Boolean).slice(0, limit)
+    : [];
+}
+
+function metadataNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+// Worn today, yesterday or the day before. Sent as an explicit flag because the
+// model follows a flag far more reliably than a number it has to interpret.
+export const RECENT_WEAR_DAYS = 2;
+
+export function isWornRecently(daysSinceWorn: number | null | undefined): boolean {
+  return typeof daysSinceWorn === "number" && daysSinceWorn >= 0 && daysSinceWorn <= RECENT_WEAR_DAYS;
+}
 
 function candidateForPrompt(candidate: OutfitCandidate) {
   return {
@@ -17,6 +42,16 @@ function candidateForPrompt(candidate: OutfitCandidate) {
     styleTags: Array.isArray(candidate.aiMetadata.styleTags) ? candidate.aiMetadata.styleTags : [],
     occasionTags: Array.isArray(candidate.aiMetadata.occasionTags) ? candidate.aiMetadata.occasionTags : [],
     formality: candidate.aiMetadata.formality ?? null,
+    fit: metadataText(candidate.aiMetadata.fit),
+    material: metadataText(candidate.aiMetadata.material),
+    pattern: metadataText(candidate.pattern),
+    warmth: metadataNumber(candidate.aiMetadata.warmth),
+    seasonTags: metadataList(candidate.aiMetadata.seasonTags),
+    weatherTags: metadataList(candidate.aiMetadata.weatherTags),
+    daysSinceWorn: candidate.daysSinceWorn ?? null,
+    ...(isWornRecently(candidate.daysSinceWorn) ? { wornRecently: true } : {}),
+    ...(candidate.laundryState === "needs_wash" ? { wornSinceWash: candidate.wearCountSinceWash ?? true } : {}),
+    ...(candidate.laundryState === "in_laundry" ? { inLaundry: true } : {}),
     score: candidate.score,
     reason: candidate.reason,
   };
@@ -47,6 +82,13 @@ export function buildOutfitGenerationDeveloperPrompt(): string {
     "If an item the user needs is not in candidates, put it in missingItems, not in items.",
     "Do not hallucinate item IDs, names, brands, or colors.",
     "Use style memory as personalization guidance, but never violate the user's current request.",
+    "userPreferences are what the user told us directly (style, fit, favorite and avoided colors). Treat them as stronger than learned style memory and weaker than the current request. Skip avoided colors when a reasonable alternative exists.",
+    "When weatherNow is present, dress for it: use each item's warmth (1 light to 5 very warm), material, seasonTags and weatherTags. In cold weather include a warm layer or outerwear when one exists; in hot weather avoid heavy layers; in wet weather avoid delicate footwear when an alternative exists. If the user states different weather in their request, the request wins.",
+    "Build a real outfit, not a list: balance proportions using fit (for example relaxed with slimmer, or one oversized piece), keep to a coherent palette, and avoid stacking several loud patterns.",
+    "userPreferences.preferredFit and fitPreferences are how the user likes clothes to fit. For tops and bottoms, choose a piece whose fit matches when one suits the occasion; only use a clearly opposite fit (for example slim for someone who prefers relaxed) when nothing matching works, and never just because it is the more obvious pick.",
+    "When the request names no occasion or dress level (for example 'what should I wear today'), dress for an ordinary day in the user's own styleAesthetics rather than dressing up.",
+    "Wear rotation applies to every role separately, including footwear, outerwear and accessories. daysSinceWorn null means never logged as worn. An item marked wornRecently was worn in the last 2 days: do not use it when another candidate in the same role suits the request, even if it is the more obvious choice. An item marked wornSinceWash is not fresh: do not use it when a clean candidate in the same role suits the request. Use a wornRecently or wornSinceWash item only when the user asked for it or every alternative in that role is clearly wrong for the request. Items marked inLaundry appear only because the user selected them.",
+    "stylistMessage is the short chat reply shown above the outfit card. Write it as a confident personal stylist speaking to the user: 1 to 2 sentences, under 40 words, naming the key pieces in plain words and the one reason that matters most (weather, occasion or their taste). Vary how it opens and do not begin with 'Go with' or 'I found'. Describe each piece with its own listed color in ordinary lowercase words (for example 'the black pleated trousers'), and mention only pieces that are in the first outfit. Refer to the occasion only in the user's words; do not add plans they did not mention, such as a dinner or a date. No item IDs, no lists, no mention of data, scores, memory or preferences as such.",
     "Do not use tank tops, graphic tees, sandals, or athletic/gym shoes for office unless explicitly requested or no alternative exists.",
     "Keep stylingTips actionable and short.",
   ].join(" ");
@@ -72,6 +114,9 @@ export function buildOutfitGenerationUserPrompt(
     formality: input.formality,
     inferredFormality: context.retrievalPlan.intent.formality,
     weather: input.weather ?? context.retrievalPlan.intent.weather ?? null,
+    weatherNow: summarizeOutfitWeather(input.weatherContext)?.text ?? null,
+    today: outfitDateContext(input.localDate),
+    userPreferences: context.userPreferences ?? null,
     retrievalPlan: context.retrievalPlan,
     styleMemory: context.styleMemory
       ? {
@@ -88,6 +133,7 @@ export function buildOutfitGenerationUserPrompt(
     },
     candidatesByRole,
     outputSchema: {
+      stylistMessage: "string, the short chat reply for the first outfit",
       outfits: [
         {
           title: "string",

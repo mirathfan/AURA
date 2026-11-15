@@ -8,6 +8,7 @@ import type {
   OutfitValidationWarning,
   ValidatedOutfit,
 } from "./outfitTypes";
+import type { OutfitWeatherContext } from "./outfitSignals";
 import type {
   FeedbackType,
   StyleMemoryContextResponse,
@@ -28,6 +29,8 @@ export type AuraStylingAgentRequest = {
   count?: number;
   occasion?: string;
   weather?: string;
+  weatherContext?: OutfitWeatherContext;
+  localDate?: string;
   formality?: WardrobeRetrievalFormality;
   preferredColors?: string[];
   requiredColors?: string[];
@@ -166,6 +169,7 @@ export type AuraStylingAgentResponse = {
   mode: AuraStylingAgentMode;
   intent: AuraStylingAgentIntent;
   message: string;
+  messageSource?: "stylist" | "template";
   suggestedActions: AuraAgentSuggestedAction[];
   requestedCount?: number;
   outfits?: ValidatedOutfit[];
@@ -186,6 +190,7 @@ export type AuraStylingAgentState = {
   validationErrors?: string[];
   validationWarnings?: OutfitValidationWarning[];
   repaired?: boolean;
+  stylistMessage?: string;
   feedbackResult?: unknown;
   response?: AuraStylingAgentResponse;
   diagnostics: AuraStylingAgentDiagnostics;

@@ -12,6 +12,12 @@ jest.mock("@/src/lib/firebase", () => ({
   auth: mockAuth,
 }));
 
+const mockGetAuraAgentWeatherContext = jest.fn(async (): Promise<Record<string, unknown> | undefined> => undefined);
+jest.mock("@/src/lib/auraAgentWeather", () => ({
+  getAuraAgentWeatherContext: () => mockGetAuraAgentWeatherContext(),
+  localDateKey: () => "2026-11-14",
+}));
+
 jest.mock("firebase/functions", () => ({
   getFunctions: mockGetFunctions,
   httpsCallable: mockHttpsCallable,
@@ -332,5 +338,38 @@ describe("aura styling agent client helpers", () => {
     expect(buildAuraAgentFallbackMessage({ code: "auth/unauthenticated", message: "no user" })).toBe(
       AURA_AGENT_SIGN_IN_MESSAGE,
     );
+  });
+
+  it("adds today's date and quick weather to outfit requests", async () => {
+    mockGetAuraAgentWeatherContext.mockResolvedValueOnce({ highF: 41, lowF: 30, condition: "Clear" });
+    await runAuraStylingAgentClient({ query: "dinner tonight" }, { timeoutMs: 100 });
+    expect(mockCallable).toHaveBeenCalledWith(expect.objectContaining({
+      localDate: "2026-11-14",
+      weatherContext: { highF: 41, lowF: 30, condition: "Clear" },
+    }));
+  });
+
+  it("still sends the request when weather is unavailable", async () => {
+    mockGetAuraAgentWeatherContext.mockRejectedValueOnce(new Error("no location"));
+    await runAuraStylingAgentClient({ query: "dinner tonight" }, { timeoutMs: 100 });
+    const payload = mockCallable.mock.calls[0][0];
+    expect(payload.localDate).toBe("2026-11-14");
+    expect(payload.weatherContext).toBeUndefined();
+  });
+
+  it("does not look up weather for feedback or when the caller states weather", async () => {
+    await runAuraStylingAgentClient({ mode: "feedback", feedbackType: "like", previousOutfit: {} }, { timeoutMs: 100 });
+    await runAuraStylingAgentClient({ query: "outfit", weather: "rainy" }, { timeoutMs: 100 });
+    expect(mockGetAuraAgentWeatherContext).not.toHaveBeenCalled();
+    expect(mockCallable.mock.calls[0][0].localDate).toBeUndefined();
+  });
+
+  it("drops malformed weather values from the payload", () => {
+    expect(buildAuraAgentCallablePayload({
+      query: "outfit",
+      localDate: "today",
+      weatherContext: { tempF: Number.NaN, highF: 999, condition: "  Clear " },
+    })).toMatchObject({ weatherContext: { condition: "Clear" } });
+    expect(buildAuraAgentCallablePayload({ query: "outfit", localDate: "today" }).localDate).toBeUndefined();
   });
 });

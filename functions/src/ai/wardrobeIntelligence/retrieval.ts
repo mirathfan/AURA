@@ -11,6 +11,7 @@ import type {
   WardrobeRetrievalResult,
 } from "./retrievalTypes";
 import type { ClosetItemDocument, NormalizedClosetItemMetadata } from "./types";
+import { daysSinceLastWorn, laundryStateForItem, wearCountSinceWash } from "./outfitSignals";
 
 export const DEFAULT_RETRIEVAL_LIMIT = 12;
 export const MAX_RETRIEVAL_LIMIT = 50;
@@ -568,6 +569,10 @@ export function buildWardrobeRetrievalResult(
     embeddingTextPreview: previewText(candidate.item.embeddingText),
     status: cleanText(candidate.item.status) || null,
     itemLifecycleStatus: cleanText(candidate.item.itemLifecycleStatus) || null,
+    laundryState: laundryStateForItem(candidate.item),
+    daysSinceWorn: daysSinceLastWorn(candidate.item),
+    wearCountSinceWash: wearCountSinceWash(candidate.item),
+    ...(cleanText(candidate.item.pattern) ? { pattern: cleanText(candidate.item.pattern).toLowerCase().slice(0, 40) } : {}),
   };
 }
 

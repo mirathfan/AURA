@@ -81,4 +81,15 @@ describe("auraAgentDisplay", () => {
       "I couldn't find a complete outfit yet.",
     );
   });
+
+  it("prefers the stylist-written reply over the count template", () => {
+    const response = {
+      message: "Charcoal knit with dark denim. Warm enough for tonight.",
+      messageSource: "stylist",
+      outfits: [titledOutfit],
+    } as AuraAgentResponse;
+    expect(getAgentDisplayMessage(response)).toBe("Charcoal knit with dark denim. Warm enough for tonight.");
+    expect(getAgentDisplayMessage({ ...response, messageSource: "template" }))
+      .toBe("I found one closet-based option: Classic Blue And Black.");
+  });
 });

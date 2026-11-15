@@ -1,4 +1,5 @@
 import { assertAiConsent, setAiConsentUser } from "../../shared/aiConsent";
+import { normalizeOutfitLocalDate, normalizeOutfitWeatherContext } from "./outfitSignals";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setLogContext, tracedHandler } from "../../shared/logger";
 import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
@@ -102,6 +103,8 @@ function normalizeRequest(data: unknown): AuraStylingAgentRequest {
     count: Number.isFinite(Number(record.count)) ? Number(record.count) : undefined,
     occasion: cleanText(record.occasion) || undefined,
     weather: cleanText(record.weather) || undefined,
+    weatherContext: normalizeOutfitWeatherContext(record.weatherContext),
+    localDate: normalizeOutfitLocalDate(record.localDate),
     formality: cleanText(record.formality) as AuraStylingAgentRequest["formality"],
     preferredColors: stringArray(record.preferredColors),
     requiredColors: stringArray(record.requiredColors),

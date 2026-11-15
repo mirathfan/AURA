@@ -44,12 +44,21 @@ export type AuraAgentFormality =
   | "business_casual"
   | "formal";
 
+export type AuraAgentWeatherContext = {
+  tempF?: number;
+  highF?: number;
+  lowF?: number;
+  condition?: string;
+};
+
 export type AuraAgentRequest = {
   query?: string;
   mode?: AuraAgentRequestMode;
   count?: number;
   occasion?: string;
   weather?: string;
+  weatherContext?: AuraAgentWeatherContext;
+  localDate?: string;
   formality?: AuraAgentFormality;
   preferredColors?: string[];
   requiredColors?: string[];
@@ -195,6 +204,7 @@ export type AuraAgentResponse = {
   mode: AuraAgentMode;
   intent: AuraAgentIntent;
   message: string;
+  messageSource?: "stylist" | "template";
   suggestedActions: AuraAgentSuggestedAction[];
   requestedCount?: number;
   outfits?: AuraAgentOutfit[];

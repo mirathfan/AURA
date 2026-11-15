@@ -475,4 +475,46 @@ describe("runAuraStylingAgentGraph", () => {
     expect(response.diagnostics?.steps).toEqual(["classify_intent", "fallback_response"]);
     expect(harness.calls).toEqual([]);
   });
+
+  it("passes weather, date and stated preferences into generation and returns the stylist reply", async () => {
+    let seenInput: Record<string, unknown> | undefined;
+    let seenPreferences: unknown;
+    const harness = deps({
+      loadUserPreferences: async () => ({ preferredFit: "relaxed", avoidedColors: ["orange"] }),
+      generateOutfits: async ({ input, context: generationContext }) => {
+        seenInput = input as unknown as Record<string, unknown>;
+        seenPreferences = generationContext.userPreferences;
+        return {
+          outfits: [outfit()],
+          validationErrors: [],
+          validationWarnings: [],
+          repaired: false,
+          stylistMessage: "White oxford with black trousers. Sharp without trying.",
+        };
+      },
+    });
+    const response = await runAuraStylingAgentGraph("uid", {
+      query: "office outfit with black shoes",
+      weatherContext: { tempF: 38, condition: "Clear" },
+      localDate: "2026-11-14",
+    }, harness.deps);
+
+    expect(seenInput?.weatherContext).toEqual({ tempF: 38, condition: "Clear" });
+    expect(seenInput?.localDate).toBe("2026-11-14");
+    expect(seenPreferences).toEqual({ preferredFit: "relaxed", avoidedColors: ["orange"] });
+    expect(response.message).toBe("White oxford with black trousers. Sharp without trying.");
+    expect(response.messageSource).toBe("stylist");
+  });
+
+  it("falls back to the template reply and still generates when preferences fail to load", async () => {
+    const harness = deps({
+      loadUserPreferences: async () => {
+        throw new Error("profile unavailable");
+      },
+    });
+    const response = await runAuraStylingAgentGraph("uid", { query: "office outfit with black shoes" }, harness.deps);
+    expect(response.outfits).toHaveLength(1);
+    expect(response.messageSource).toBe("template");
+    expect(response.message).toMatch(/closet-based option/);
+  });
 });

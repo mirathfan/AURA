@@ -1,6 +1,5 @@
 import { getFirestore } from "firebase-admin/firestore";
 
-const db = getFirestore();
 const LIST_LIMIT = 10;
 
 type CompactStringMap = Record<string, string>;
@@ -175,7 +174,7 @@ function addStringList(target: AuraUserProfile, key: AuraUserProfileListKey, val
 }
 
 export async function loadAuraUserProfile(uid: string): Promise<AuraUserProfile> {
-  const snap = await db.collection("users").doc(uid).get();
+  const snap = await getFirestore().collection("users").doc(uid).get();
   const data = snap.data() ?? {};
   const profilePreferences = readRecord(data.profilePreferences);
   const stylePreferences = readRecord(profilePreferences.stylePreferences);
