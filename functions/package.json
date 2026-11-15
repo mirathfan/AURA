@@ -8,6 +8,7 @@
     "eval:aura": "npm run build && node scripts/runAuraEvals.cjs",
     "eval:aura:gate": "npm run build && node scripts/runAuraEvalGate.cjs",
     "eval:aura:compare": "npm run build && node scripts/runAuraEvalCompare.cjs",
+    "eval:aura:live": "npm run build && node scripts/runAuraLiveEval.cjs",
     "smoke:product-links": "node scripts/smokeProductExtraction.cjs",
     "build:watch": "tsc --watch",
     "serve": "npm run build && firebase emulators:start --only functions",
