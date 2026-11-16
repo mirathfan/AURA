@@ -13,7 +13,8 @@ import {
   retrieveOutfitGenerationContext,
   type RetrieveOutfitContextDeps,
 } from "./outfitContext";
-import { generateValidatedOutfitsFromContext } from "./outfitGeneration";
+import { logger } from "../../shared/logger";
+import { generateValidatedOutfitsWithRetry } from "./outfitGeneration";
 import { safeRecordAuraMetricEvent } from "./metrics";
 import {
   outfitStyleMemoryContextFromResponse,
@@ -200,6 +201,7 @@ function outfitInputFromState(state: AuraStylingAgentState): NormalizedOutfitGen
   if (!state.intent) throw new Error("Cannot build outfit input before intent classification.");
   return normalizeOutfitGenerationInput({
     query: agentOutfitQuery(state),
+    userText: cleanText(state.request.query),
     count: resolveRequestedOutfitCount(state.request),
     occasion: state.request.occasion ||
       state.intent.constraints.occasion ||
@@ -330,7 +332,9 @@ export const generateOutfitsNode: AgentNode = async (state, deps) => {
   }
   const generated = deps.generateOutfits
     ? await deps.generateOutfits({ input: state.input, context: state.context, state })
-    : await generateValidatedOutfitsFromContext(state.input, state.context);
+    : await generateValidatedOutfitsWithRetry(state.input, state.context, {
+      onValidationFailure: (info) => logger.warn("[AURA_STYLING_AGENT] outfit validation failed", info),
+    });
   return {
     ...state,
     outfits: generated.outfits,

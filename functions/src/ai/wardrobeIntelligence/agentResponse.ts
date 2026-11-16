@@ -5,6 +5,7 @@ import type {
   AuraStylingAgentResponse,
   AuraStylingAgentState,
 } from "./agentTypes";
+import type { OutfitLaundryNotices } from "./outfitTypes";
 import type { StyleMemoryContextResponse } from "./styleMemoryTypes";
 
 const CLIENT_VECTOR_KEYS = new Set([
@@ -96,7 +97,45 @@ export function buildFeedbackResult(state: AuraStylingAgentState): AuraAgentFeed
   };
 }
 
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+// A plain sentence the user must see whenever something they asked for is in
+// the laundry. Written here, not by the model, so it is always accurate.
+export function laundryNoticeText(notices: OutfitLaundryNotices | undefined | null): string {
+  if (!notices) return "";
+  const parts: string[] = [];
+  if (notices.namedInLaundry.length) {
+    const many = notices.namedInLaundry.length > 1;
+    parts.push(
+      `Your ${joinNames(notices.namedInLaundry)} ${many ? "are" : "is"} in the laundry, so I left ${many ? "them" : "it"} out. ` +
+      `Tell me if ${many ? "they're" : "it's"} clean and I'll use ${many ? "them" : "it"}.`,
+    );
+  }
+  if (notices.selectedInLaundry.length) {
+    const many = notices.selectedInLaundry.length > 1;
+    parts.push(
+      `Heads up: your ${joinNames(notices.selectedInLaundry)} ${many ? "are" : "is"} marked as in the laundry. ` +
+      `I used ${many ? "them" : "it"} because you picked ${many ? "them" : "it"}.`,
+    );
+  }
+  return parts.join(" ");
+}
+
+function laundryNotice(state: AuraStylingAgentState): string {
+  return laundryNoticeText(state.context?.diagnostics.laundryNotices);
+}
+
 function buildMessage(state: AuraStylingAgentState): string {
+  const base = buildBaseMessage(state);
+  const mode = state.intent?.mode ?? "unknown";
+  const notice = mode === "generate_outfit" || mode === "refine_outfit" ? laundryNotice(state) : "";
+  return notice ? `${base} ${notice}` : base;
+}
+
+function buildBaseMessage(state: AuraStylingAgentState): string {
   const mode = state.intent?.mode ?? "unknown";
   if (mode === "unknown") {
     return "I could not map that to a supported styling action yet.";
@@ -186,7 +225,9 @@ export function buildAgentResponse(state: AuraStylingAgentState): AuraStylingAge
     mode: state.intent.mode,
     intent: state.intent,
     message: buildMessage(state),
-    messageSource: state.stylistMessage && state.outfits?.length ? "stylist" : "template",
+    // "stylist" tells the app to show this message as written. A laundry
+    // notice must be shown too, so it also sets it.
+    messageSource: (state.stylistMessage || laundryNotice(state)) && state.outfits?.length ? "stylist" : "template",
     suggestedActions: suggestedActions(state),
     ...(state.input?.count ? {requestedCount: state.input.count} : {}),
     ...(state.outfits ? { outfits: state.outfits } : {}),

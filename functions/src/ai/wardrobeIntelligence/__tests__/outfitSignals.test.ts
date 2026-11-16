@@ -1,22 +1,25 @@
 import {
   buildOutfitRetrievalPlan,
   excludeLaundryCandidates,
-  excludeStaleCandidates,
+  applyWearRotation,
   queryNamesCandidate,
   normalizeOutfitGenerationInput,
+  retrieveOutfitGenerationContext,
 } from "../outfitContext";
 import {
   generateValidatedOutfitsFromContext,
+  generateValidatedOutfitsWithRetry,
+  summarizeValidationFailure,
   resolveStylistMessage,
   type OutfitOpenAIClient,
 } from "../outfitGeneration";
 import {
   buildOutfitGenerationDeveloperPrompt,
   buildOutfitGenerationUserPrompt,
-  isWornRecently,
 } from "../outfitPrompt";
 import {
   daysSinceLastWorn,
+  isWornTooRecently,
   laundryStateForItem,
   normalizeOutfitLocalDate,
   normalizeOutfitWeatherContext,
@@ -238,24 +241,24 @@ describe("wear rotation filter", () => {
   });
 
   it("drops recently worn and unwashed items when enough fresh ones remain", () => {
-    const result = excludeStaleCandidates(closet());
+    const result = applyWearRotation(closet());
     expect(result.buckets.top.map((entry) => entry.itemId)).toEqual(["knit-top-02", "polo-top-04", "shirt-top-05"]);
     expect(result.excludedCount).toBe(2);
   });
 
   it("leaves a role alone when too few fresh items remain, and never touches accessories", () => {
-    const result = excludeStaleCandidates(closet());
+    const result = applyWearRotation(closet());
     // Only two fresh pairs of shoes: keep the sneakers as an option.
     expect(result.buckets.footwear).toHaveLength(3);
     expect(result.buckets.accessory).toHaveLength(1);
-    const relaxed = excludeStaleCandidates(closet(), { minFreshPerRole: 2 });
+    const relaxed = applyWearRotation(closet(), { minFreshPerRole: 2 });
     expect(relaxed.buckets.footwear.map((entry) => entry.itemId)).toEqual(["boots-shoes-02", "loafers-shoes-03"]);
   });
 
   it("keeps items the user selected or named", () => {
-    const selected = excludeStaleCandidates(closet(), { keepItemIds: ["tee-top-01"] });
+    const selected = applyWearRotation(closet(), { keepItemIds: ["tee-top-01"] });
     expect(selected.buckets.top.map((entry) => entry.itemId)).toContain("tee-top-01");
-    const named = excludeStaleCandidates(closet(), { query: "outfit with my white sneakers", minFreshPerRole: 2 });
+    const named = applyWearRotation(closet(), { userText: "outfit with my white sneakers", minFreshPerRole: 2 });
     expect(named.buckets.footwear.map((entry) => entry.itemId)).toContain("sneakers-shoes-01");
     const [sneakers] = closet().footwear;
     expect(queryNamesCandidate("casual outfit for today", sneakers)).toBe(false);
@@ -318,10 +321,10 @@ describe("outfit prompt context", () => {
     });
     expect(prompt.candidatesByRole.bottom[0].wornSinceWash).toBeUndefined();
     expect(prompt.candidatesByRole.top[0].wornRecently).toBeUndefined();
-    expect(isWornRecently(0)).toBe(true);
-    expect(isWornRecently(2)).toBe(true);
-    expect(isWornRecently(3)).toBe(false);
-    expect(isWornRecently(null)).toBe(false);
+    expect(isWornTooRecently("top", 0)).toBe(true);
+    expect(isWornTooRecently("top", 2)).toBe(false);
+    expect(isWornTooRecently("outerwear", 0)).toBe(false);
+    expect(isWornTooRecently("top", null)).toBe(false);
     expect(buildOutfitGenerationDeveloperPrompt()).toMatch(/wornRecently/);
     expect(buildOutfitGenerationDeveloperPrompt()).toMatch(/weatherNow/);
     expect(buildOutfitGenerationDeveloperPrompt()).toMatch(/stylistMessage/);
@@ -388,5 +391,78 @@ describe("stylist message", () => {
     expect(repairedResult.repaired).toBe(true);
     expect(repairedResult.outfits).toHaveLength(1);
     expect(repairedResult.stylistMessage).toBeUndefined();
+  });
+});
+
+describe("rejected outfit resilience", () => {
+  const input = normalizeOutfitGenerationInput({ query: "dinner tonight, nothing too formal" });
+  const bad = outfitJson("Bad one.", ["ghost-top-99", "denim-bottom-01", "boots-shoes-01"]);
+  const good = outfitJson("A warm, relaxed look.");
+
+  it("summarises rejection reasons as rule names and counts only", () => {
+    expect(summarizeValidationFailure([
+      "outfit 1: hallucinated itemId ghost-top-99.",
+      "outfit 1: duplicate itemId knit-top-01.",
+      "outfit 2: hallucinated itemId other.",
+      "outfit 1: something new",
+      "No outfits were generated.",
+    ])).toEqual({ unknown_item: 2, duplicate_item: 1, other: 1, no_outfits: 1 });
+    expect(summarizeValidationFailure(undefined)).toEqual({});
+  });
+
+  it("tries again when the outfit and its repair are both rejected", async () => {
+    const { client, calls } = clientReturning(bad, bad, good);
+    const failures: unknown[] = [];
+    const result = await generateValidatedOutfitsWithRetry(input, context(), {
+      client,
+      onValidationFailure: (info) => failures.push(info),
+    });
+    expect(result.outfits).toHaveLength(1);
+    expect(calls).toHaveLength(3);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ attempt: 1, maxAttempts: 2 });
+    expect(JSON.stringify(failures)).not.toMatch(/ghost-top-99/);
+  });
+
+  it("gives up after the last attempt and reports each failure", async () => {
+    const { client, calls } = clientReturning(bad, bad, bad, bad);
+    const failures: unknown[] = [];
+    await expect(generateValidatedOutfitsWithRetry(input, context(), {
+      client,
+      onValidationFailure: (info) => failures.push(info),
+    })).rejects.toThrow(/failed validation/);
+    expect(calls).toHaveLength(4);
+    expect(failures).toHaveLength(2);
+  });
+
+  it("does not retry other errors", async () => {
+    let calls = 0;
+    const client: OutfitOpenAIClient = {
+      responses: { create: async () => { calls += 1; throw new Error("provider down"); } },
+    };
+    await expect(generateValidatedOutfitsWithRetry(input, context(), { client })).rejects.toThrow(/provider down/);
+    expect(calls).toBe(1);
+  });
+});
+
+describe("role lookups", () => {
+  it("run together instead of one after another", async () => {
+    let active = 0;
+    let peak = 0;
+    const roles: string[] = [];
+    const result = await retrieveOutfitGenerationContext("uid", { query: "casual outfit" }, {
+      retrieveRoleCandidates: async ({ role }) => {
+        roles.push(role);
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+        return buckets()[role];
+      },
+      loadWardrobe: async () => { throw new Error("must not be called with a custom retriever"); },
+    });
+    expect(peak).toBeGreaterThan(1);
+    expect(roles.length).toBeGreaterThanOrEqual(3);
+    expect(result.candidates.top.map((entry) => entry.itemId)).toEqual(["knit-top-01"]);
   });
 });

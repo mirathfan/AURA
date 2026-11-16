@@ -21,11 +21,21 @@ export function mergeStructuredCandidates(vectors: WardrobeVectorCandidate[], wa
     return { ...current, item: valid ? current.item : { ...current.item, aiMetadata: undefined, embeddingText: undefined }, distance: null };
   });
 }
-export async function retrieveHybridCandidates(uid: string, query: string, limit: number) {
-  const collection = getFirestore().collection(`users/${uid}/items`);
-  const snapshot = await collection.limit(STRUCTURED_RETRIEVAL_LIMIT + 1).get();
+// One bounded read of the owner's closet. Callers that run several queries
+// for the same request load it once and pass it to each query.
+export async function loadWardrobeForRetrieval(uid: string): Promise<WardrobeVectorCandidate[]> {
+  const snapshot = await getFirestore().collection(`users/${uid}/items`).limit(STRUCTURED_RETRIEVAL_LIMIT + 1).get();
   if (snapshot.size > STRUCTURED_RETRIEVAL_LIMIT) throw new HttpsError("failed-precondition", "This wardrobe exceeds the current 500-item styling retrieval limit.");
-  const wardrobe = snapshot.docs.map((doc) => ({ itemId: doc.id, item: doc.data() as ClosetItemDocument }));
+  return snapshot.docs.map((doc) => ({ itemId: doc.id, item: doc.data() as ClosetItemDocument, distance: null }));
+}
+export async function retrieveHybridCandidates(
+  uid: string,
+  query: string,
+  limit: number,
+  options: { wardrobe?: WardrobeVectorCandidate[] } = {},
+) {
+  const collection = getFirestore().collection(`users/${uid}/items`);
+  const wardrobe = options.wardrobe ?? await loadWardrobeForRetrieval(uid);
   let vectors: WardrobeVectorCandidate[] = [];
   try {
     const vector = await createTextEmbedding(query);

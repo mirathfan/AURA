@@ -12,9 +12,11 @@ jest.mock("@/src/lib/firebase", () => ({
   auth: mockAuth,
 }));
 
-const mockGetAuraAgentWeatherContext = jest.fn(async (): Promise<Record<string, unknown> | undefined> => undefined);
+const mockGetAuraAgentWeatherContext = jest.fn(
+  async (_options?: unknown): Promise<Record<string, unknown> | undefined> => undefined,
+);
 jest.mock("@/src/lib/auraAgentWeather", () => ({
-  getAuraAgentWeatherContext: () => mockGetAuraAgentWeatherContext(),
+  getAuraAgentWeatherContext: (options?: unknown) => mockGetAuraAgentWeatherContext(options),
   localDateKey: () => "2026-11-14",
 }));
 
@@ -362,6 +364,27 @@ describe("aura styling agent client helpers", () => {
     await runAuraStylingAgentClient({ query: "outfit", weather: "rainy" }, { timeoutMs: 100 });
     expect(mockGetAuraAgentWeatherContext).not.toHaveBeenCalled();
     expect(mockCallable.mock.calls[0][0].localDate).toBeUndefined();
+  });
+
+  it("asks for tomorrow's forecast when the request is about tomorrow", async () => {
+    mockGetAuraAgentWeatherContext.mockResolvedValueOnce({
+      highF: 38, lowF: 27, condition: "Snow", forDate: "2026-11-15", observedAtMs: 1794700000000,
+    });
+    await runAuraStylingAgentClient({ query: "what should I wear tomorrow" });
+    expect(mockGetAuraAgentWeatherContext).toHaveBeenLastCalledWith({ dateKey: "2026-11-15" });
+    expect(mockCallable.mock.calls[mockCallable.mock.calls.length - 1][0]).toMatchObject({
+      localDate: "2026-11-14",
+      weatherContext: { highF: 38, forDate: "2026-11-15", observedAtMs: 1794700000000 },
+    });
+  });
+
+  it("sends no weather for a trip or another day", async () => {
+    mockGetAuraAgentWeatherContext.mockClear();
+    await runAuraStylingAgentClient({ query: "pack an outfit for my beach trip next week" });
+    expect(mockGetAuraAgentWeatherContext).not.toHaveBeenCalled();
+    const payload = mockCallable.mock.calls[mockCallable.mock.calls.length - 1][0];
+    expect(payload.weatherContext).toBeUndefined();
+    expect(payload.localDate).toBe("2026-11-14");
   });
 
   it("drops malformed weather values from the payload", () => {

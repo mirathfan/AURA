@@ -1,8 +1,12 @@
-import { retrieveHybridCandidates } from "./hybridRetrieval";
+import { loadWardrobeForRetrieval, retrieveHybridCandidates } from "./hybridRetrieval";
 import {
+  hasHardRotationRequest,
+  isNotFreshForRole,
+  isWornTooRecently,
   laundryStateForItem,
   normalizeOutfitLocalDate,
   normalizeOutfitWeatherContext,
+  resolveOutfitWeather,
   summarizeOutfitWeather,
 } from "./outfitSignals";
 import { getFirestore } from "firebase-admin/firestore";
@@ -12,6 +16,7 @@ import {
   buildWardrobeRetrievalResult,
   buildWardrobeRetrievalResults,
   rawVectorLimit,
+  type WardrobeVectorCandidate,
 } from "./retrieval";
 import type { WardrobeRetrievalFormality } from "./retrievalTypes";
 import { canonicalizeOutfitRole } from "./outfitRole";
@@ -22,6 +27,7 @@ import {
   type OutfitCandidateBuckets,
   type OutfitGenerationContext,
   type OutfitGenerationInput,
+  type OutfitLaundryNotices,
   type OutfitRetrievalPlan,
   type OutfitRole,
 } from "./outfitTypes";
@@ -100,10 +106,21 @@ export function normalizeOutfitGenerationInput(value: unknown): NormalizedOutfit
   const count = Number(data.count ?? DEFAULT_OUTFIT_COUNT);
   const occasion = cleanText(data.occasion).slice(0, 200);
   const weather = cleanText(data.weather).slice(0, 200);
-  const weatherContext = normalizeOutfitWeatherContext(data.weatherContext);
   const localDate = normalizeOutfitLocalDate(data.localDate);
+  const userText = cleanText(data.userText).slice(0, 2000) || query;
+  // Weather is kept only when it applies to the day the outfit is for. Older
+  // app versions send neither weather nor a date, which is a valid request.
+  const resolvedWeather = resolveOutfitWeather({
+    userText,
+    localDate,
+    weatherContext: normalizeOutfitWeatherContext(data.weatherContext),
+  });
+  const weatherContext = resolvedWeather.weatherContext;
   return {
     query,
+    userText,
+    targetDay: resolvedWeather.targetDay,
+    ...(resolvedWeather.ignoredReason ? { weatherIgnoredReason: resolvedWeather.ignoredReason } : {}),
     count: Math.max(1, Math.min(MAX_OUTFIT_COUNT, Number.isFinite(count) ? Math.floor(count) : DEFAULT_OUTFIT_COUNT)),
     ...(occasion ? { occasion } : {}),
     ...(weather ? { weather } : {}),
@@ -296,7 +313,10 @@ export type RetrieveOutfitContextDeps = {
     role: OutfitRole;
     query: string;
     limit: number;
+    wardrobe?: WardrobeVectorCandidate[];
   }) => Promise<OutfitCandidate[]>;
+  // Reads the closet once per request for the default role retriever.
+  loadWardrobe?: (uid: string) => Promise<WardrobeVectorCandidate[]>;
   retrieveRequiredItemCandidates?: (args: {
     uid: string;
     input: NormalizedOutfitGenerationInput;
@@ -383,39 +403,42 @@ function isInLaundry(candidate: OutfitCandidate): boolean {
 }
 
 // Items sitting in the laundry are not wearable right now. They are removed
-// unless the user explicitly selected them, in which case the request wins.
+// unless the user explicitly selected them, in which case the request wins
+// and the reply says so (see laundryNotices).
 export function excludeLaundryCandidates(
   buckets: OutfitCandidateBuckets,
   keepItemIds: string[] = [],
-): { buckets: OutfitCandidateBuckets; excludedCount: number } {
+): { buckets: OutfitCandidateBuckets; excludedCount: number; excluded: OutfitCandidate[] } {
   const keep = new Set(keepItemIds);
   const filtered = emptyCandidateBuckets();
-  let excludedCount = 0;
+  const excluded: OutfitCandidate[] = [];
   for (const role of OUTFIT_ROLES) {
     for (const candidate of buckets[role]) {
       if (isInLaundry(candidate) && !keep.has(candidate.itemId)) {
-        excludedCount += 1;
+        excluded.push(candidate);
         continue;
       }
       filtered[role].push(candidate);
     }
   }
-  return { buckets: filtered, excludedCount };
+  return { buckets: filtered, excludedCount: excluded.length, excluded };
 }
 
-// Wear rotation is enforced here, not left to the model: a live eval showed the
-// model keeps picking a piece worn that day, or one that needs a wash, even
-// when told not to. An item is "stale" when it was worn today or yesterday or
-// has been worn since its last wash.
-export const ROTATION_RECENT_WEAR_DAYS = 1;
+// Wear rotation. A live eval showed the model keeps picking a piece worn that
+// day, or one that needs a wash, even when told not to, so the preference is
+// applied here by ranking. It is a preference, not a rule: a recently worn
+// piece stays available when the closet is small or when it is clearly the
+// best match, and it always stays when the user selected or named it. It
+// becomes a rule only when the user asks for it outright.
 export const ROTATION_MIN_FRESH_PER_ROLE = 3;
-// Accessories (a watch, a ring) are worn daily by design.
-const ROTATION_ROLES: OutfitRole[] = ["top", "bottom", "footwear", "outerwear", "one_piece"];
+// A stale piece survives when its retrieval score beats the best fresh piece
+// in its role by at least this much.
+export const ROTATION_CLEARLY_BETTER_MARGIN = 0.15;
 
 export function isStaleForRotation(candidate: OutfitCandidate): boolean {
-  const days = candidate.daysSinceWorn;
-  const wornRecently = typeof days === "number" && days >= 0 && days <= ROTATION_RECENT_WEAR_DAYS;
-  return wornRecently || candidate.laundryState === "needs_wash";
+  const role = candidate.allowedRole ?? candidate.role;
+  return isWornTooRecently(role, candidate.daysSinceWorn) ||
+    isNotFreshForRole(role, candidate.laundryState, candidate.wearCountSinceWash);
 }
 
 function rotationWords(text: unknown): string[] {
@@ -426,47 +449,94 @@ function rotationWords(text: unknown): string[] {
     .map((word) => word.replace(/s$/, ""));
 }
 
-// "style my white sneakers" must keep the sneakers even if worn yesterday.
-export function queryNamesCandidate(query: string, candidate: OutfitCandidate): boolean {
-  const queryWords = new Set(rotationWords(query));
-  if (!queryWords.size) return false;
-  const named = (text: unknown) => {
-    const words = rotationWords(text);
-    return words.length > 0 && words.every((word) => queryWords.has(word));
-  };
-  return named(candidate.subcategory) || named(candidate.name);
+function wordsNamedIn(userText: string, target: unknown): boolean {
+  const queryWords = new Set(rotationWords(userText));
+  const words = rotationWords(target);
+  return queryWords.size > 0 && words.length > 0 && words.every((word) => queryWords.has(word));
 }
 
-// Stale items are removed from a role only when enough fresh choices remain,
-// so a small closet never ends up with nothing suitable. Items the user
-// selected or named in the request always stay.
-export function excludeStaleCandidates(
+// "style my white sneakers" must keep the sneakers even if worn yesterday.
+// Pass the user's own words, not the query with chat context appended.
+export function queryNamesCandidate(
+  userText: string,
+  candidate: Pick<OutfitCandidate, "name" | "subcategory">,
+): boolean {
+  return wordsNamedIn(userText, candidate.subcategory) || wordsNamedIn(userText, candidate.name);
+}
+
+export function applyWearRotation(
   buckets: OutfitCandidateBuckets,
-  options: { keepItemIds?: string[]; query?: string; minFreshPerRole?: number } = {},
-): { buckets: OutfitCandidateBuckets; excludedCount: number } {
+  options: {
+    keepItemIds?: string[];
+    userText?: string;
+    minFreshPerRole?: number;
+    mode?: "soft" | "hard";
+  } = {},
+): { buckets: OutfitCandidateBuckets; excludedCount: number; mode: "soft" | "hard" } {
   const keep = new Set(options.keepItemIds ?? []);
   const minFresh = Math.max(1, options.minFreshPerRole ?? ROTATION_MIN_FRESH_PER_ROLE);
-  const filtered = emptyCandidateBuckets();
+  const mode = options.mode ?? (hasHardRotationRequest(options.userText) ? "hard" : "soft");
+  const ranked = emptyCandidateBuckets();
   let excludedCount = 0;
   for (const role of OUTFIT_ROLES) {
     const all = buckets[role];
-    if (!ROTATION_ROLES.includes(role)) {
-      filtered[role] = [...all];
+    const isProtected = (candidate: OutfitCandidate) =>
+      keep.has(candidate.itemId) ||
+      Boolean(options.userText && queryNamesCandidate(options.userText, candidate));
+    const fresh = all.filter((candidate) => !isStaleForRotation(candidate) || isProtected(candidate));
+    const stale = all.filter((candidate) => isStaleForRotation(candidate) && !isProtected(candidate));
+    if (!stale.length) {
+      ranked[role] = [...all];
       continue;
     }
-    const droppable = (candidate: OutfitCandidate) =>
-      isStaleForRotation(candidate) &&
-      !keep.has(candidate.itemId) &&
-      !(options.query && queryNamesCandidate(options.query, candidate));
-    const fresh = all.filter((candidate) => !isStaleForRotation(candidate));
-    if (fresh.length < minFresh) {
-      filtered[role] = [...all];
-      continue;
+    let keptStale: OutfitCandidate[];
+    if (mode === "hard") {
+      // A stated constraint: drop stale pieces whenever anything else exists.
+      keptStale = fresh.length ? [] : stale;
+    } else if (fresh.length < minFresh) {
+      // Small closet: keep everything, fresh pieces first.
+      keptStale = stale;
+    } else {
+      const bestFresh = Math.max(...fresh.map(scoreValue));
+      keptStale = stale.filter((candidate) => scoreValue(candidate) >= bestFresh + ROTATION_CLEARLY_BETTER_MARGIN);
     }
-    filtered[role] = all.filter((candidate) => !droppable(candidate));
-    excludedCount += all.length - filtered[role].length;
+    ranked[role] = [...fresh, ...keptStale];
+    excludedCount += stale.length - keptStale.length;
   }
-  return { buckets: filtered, excludedCount };
+  return { buckets: ranked, excludedCount, mode };
+}
+
+// Laundry items the user asked for must never vanish silently. A selected
+// item is kept and flagged; a named item is left out and explained.
+export function findLaundryNotices(args: {
+  userText: string;
+  requiredItemIds: string[];
+  // Every laundry item we know about for this request.
+  laundryItems: { itemId: string; name: string; subcategory?: string }[];
+  // Subcategories that still have a wearable piece.
+  availableSubcategories: string[];
+}): OutfitLaundryNotices {
+  const required = new Set(args.requiredItemIds);
+  const available = new Set(args.availableSubcategories.map((entry) => rotationWords(entry).join(" ")).filter(Boolean));
+  const selectedInLaundry: string[] = [];
+  const namedInLaundry: string[] = [];
+  const seen = new Set<string>();
+  for (const item of args.laundryItems) {
+    if (seen.has(item.itemId)) continue;
+    seen.add(item.itemId);
+    const name = String(item.name ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!name) continue;
+    if (required.has(item.itemId)) {
+      selectedInLaundry.push(name);
+      continue;
+    }
+    const namedExactly = wordsNamedIn(args.userText, item.name);
+    // "something with jeans" only needs explaining when no clean jeans exist.
+    const namedByKind = wordsNamedIn(args.userText, item.subcategory) &&
+      !available.has(rotationWords(item.subcategory).join(" "));
+    if (namedExactly || namedByKind) namedInLaundry.push(name);
+  }
+  return { selectedInLaundry: selectedInLaundry.slice(0, 4), namedInLaundry: namedInLaundry.slice(0, 4) };
 }
 
 export function canonicalizeOutfitCandidateBuckets(
@@ -500,9 +570,15 @@ async function defaultRetrieveRoleCandidates(args: {
   role: OutfitRole;
   query: string;
   limit: number;
+  wardrobe?: WardrobeVectorCandidate[];
 }): Promise<OutfitCandidate[]> {
   const colors = args.plan.intent.categorySpecificConstraints[args.role] ?? [];
-  const { candidates: allCandidates } = await retrieveHybridCandidates(args.uid, args.query, rawVectorLimit(args.limit));
+  const { candidates: allCandidates } = await retrieveHybridCandidates(
+    args.uid,
+    args.query,
+    rawVectorLimit(args.limit),
+    args.wardrobe ? { wardrobe: args.wardrobe } : {},
+  );
   const required = new Set(args.input.requiredItemIds);
   const candidates = allCandidates.filter((candidate) =>
     required.has(candidate.itemId) || laundryStateForItem(candidate.item) !== "in_laundry");
@@ -647,9 +723,14 @@ export async function retrieveOutfitGenerationContext(
   const retrieveRequiredItemCandidates = deps.retrieveRequiredItemCandidates ?? defaultRetrieveRequiredItemCandidates;
   const candidates = emptyCandidateBuckets();
 
-  for (const role of OUTFIT_ROLES) {
+  // The closet is read once and shared, and the role lookups run together.
+  // Doing both per role in sequence cost up to six closet reads per request.
+  const wardrobe = deps.retrieveRoleCandidates
+    ? undefined
+    : await (deps.loadWardrobe ?? loadWardrobeForRetrieval)(uid);
+  await Promise.all(OUTFIT_ROLES.map(async (role) => {
     const query = plan.categoryQueries[role];
-    if (!query) continue;
+    if (!query) return;
     candidates[role] = await retrieveRoleCandidates({
       uid,
       input: normalized,
@@ -657,8 +738,9 @@ export async function retrieveOutfitGenerationContext(
       role,
       query,
       limit,
+      ...(wardrobe ? { wardrobe } : {}),
     });
-  }
+  }));
   const requiredResult = normalized.requiredItemIds.length
     ? await retrieveRequiredItemCandidates({
       uid,
@@ -669,13 +751,28 @@ export async function retrieveOutfitGenerationContext(
     : { candidates: [] };
   assertRequiredItemCandidates(normalized, requiredResult);
   const withRequiredCandidates = mergeRequiredCandidates(candidates, requiredResult.candidates);
-  const laundryFiltered = excludeLaundryCandidates(
-    canonicalizeOutfitCandidateBuckets(withRequiredCandidates),
-    normalized.requiredItemIds,
-  );
-  const rotationFiltered = excludeStaleCandidates(laundryFiltered.buckets, {
+  const canonicalWithRequired = canonicalizeOutfitCandidateBuckets(withRequiredCandidates);
+  const laundryFiltered = excludeLaundryCandidates(canonicalWithRequired, normalized.requiredItemIds);
+  const rotationFiltered = applyWearRotation(laundryFiltered.buckets, {
     keepItemIds: normalized.requiredItemIds,
-    query: normalized.query,
+    userText: normalized.userText,
+  });
+  const allCandidates = OUTFIT_ROLES.flatMap((role) => canonicalWithRequired[role]);
+  const wardrobeLaundry = (wardrobe ?? [])
+    .filter((entry) => laundryStateForItem(entry.item) === "in_laundry")
+    .map((entry) => ({
+      itemId: entry.itemId,
+      name: String(entry.item.name ?? ""),
+      ...(entry.item.subcategory ? { subcategory: String(entry.item.subcategory) } : {}),
+    }));
+  const laundryNotices = findLaundryNotices({
+    userText: normalized.userText,
+    requiredItemIds: normalized.requiredItemIds,
+    laundryItems: [...allCandidates.filter(isInLaundry), ...laundryFiltered.excluded, ...wardrobeLaundry],
+    availableSubcategories: wardrobe
+      ? wardrobe.filter((entry) => laundryStateForItem(entry.item) !== "in_laundry")
+        .map((entry) => String(entry.item.subcategory ?? ""))
+      : OUTFIT_ROLES.flatMap((role) => laundryFiltered.buckets[role].map((entry) => entry.subcategory ?? "")),
   });
   const canonicalCandidates = rotationFiltered.buckets;
 
@@ -685,6 +782,9 @@ export async function retrieveOutfitGenerationContext(
     diagnostics: {
       ...(laundryFiltered.excludedCount ? { laundryExcludedCount: laundryFiltered.excludedCount } : {}),
       ...(rotationFiltered.excludedCount ? { rotationExcludedCount: rotationFiltered.excludedCount } : {}),
+      ...(rotationFiltered.excludedCount ? { rotationMode: rotationFiltered.mode } : {}),
+      ...(laundryNotices.selectedInLaundry.length || laundryNotices.namedInLaundry.length ? { laundryNotices } : {}),
+      ...(normalized.weatherIgnoredReason ? { weatherIgnoredReason: normalized.weatherIgnoredReason } : {}),
       candidateLimitPerCategory: limit,
       rawLimitPerCategory: rawVectorLimit(limit),
       missingRequiredRoles: missingRequiredRoles(canonicalCandidates),

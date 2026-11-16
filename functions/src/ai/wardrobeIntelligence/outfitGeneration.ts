@@ -382,7 +382,7 @@ export async function generateValidatedOutfitsFromContext(
   }
 
   if (!validOutfits.length) {
-    throw new HttpsError("failed-precondition", "Generated outfits failed validation.", {
+    throw new HttpsError("failed-precondition", OUTFIT_VALIDATION_FAILURE_MESSAGE, {
       validationErrors,
       validationWarnings,
     });
@@ -404,4 +404,115 @@ export async function generateValidatedOutfitsFromContext(
     repaired,
     ...(stylistMessage ? { stylistMessage } : {}),
   };
+}
+
+export const OUTFIT_VALIDATION_FAILURE_MESSAGE = "Generated outfits failed validation.";
+
+const VALIDATION_REASON_PATTERNS: [string, RegExp][] = [
+  ["no_outfits", /no outfits were generated/i],
+  ["incomplete_outfit", /must include top \+ bottom \+ footwear/i],
+  ["unknown_item", /hallucinated itemId/i],
+  ["duplicate_item", /duplicate itemId/i],
+  ["avoided_item", /explicitly avoided itemId/i],
+  ["avoided_term", /matched avoided term/i],
+  ["wrong_role", /allowedRole is/i],
+  ["office_weak_top", /office outfit uses weak top/i],
+  ["office_weak_footwear", /office outfit uses weak footwear/i],
+  ["missing_required_item", /missing required selected itemId/i],
+  ["call_budget_exhausted", /model call budget exhausted/i],
+];
+
+// Rule names and counts only: safe to log, with no item, query or wardrobe text.
+export function summarizeValidationFailure(errors: unknown): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const entry of Array.isArray(errors) ? errors : []) {
+    const text = String(entry ?? "");
+    const reason = VALIDATION_REASON_PATTERNS.find(([, pattern]) => pattern.test(text))?.[0] ?? "other";
+    counts[reason] = (counts[reason] ?? 0) + 1;
+  }
+  return counts;
+}
+
+export function isOutfitValidationFailure(error: unknown): error is HttpsError {
+  return error instanceof HttpsError &&
+    error.code === "failed-precondition" &&
+    error.message === OUTFIT_VALIDATION_FAILURE_MESSAGE;
+}
+
+// One request never makes more than this many outfit model calls in total,
+// counting every first attempt, repair pass and retry.
+export const OUTFIT_MAX_MODEL_CALLS_PER_REQUEST = 4;
+// A new attempt is not started this long after the first one began, so a slow
+// provider cannot push the request past the app's own timeout.
+export const OUTFIT_RETRY_DEADLINE_MS = 18_000;
+
+// A rejected outfit is usually a one-off: the same request often passes on the
+// next try. Retry on the server so the user does not see a failure for it.
+// The retry reuses the same input and context, so every user constraint
+// (selected items, avoided items, colours, occasion) applies again unchanged.
+// Generation only reads; nothing is saved or recorded here, so a retry cannot
+// repeat a user-visible action.
+export async function generateValidatedOutfitsWithRetry(
+  input: NormalizedOutfitGenerationInput,
+  context: OutfitGenerationContext,
+  options: GenerateOutfitsOptions & {
+    maxAttempts?: number;
+    maxModelCalls?: number;
+    retryDeadlineMs?: number;
+    now?: () => number;
+    onValidationFailure?: (info: {
+      attempt: number;
+      maxAttempts: number;
+      modelCalls: number;
+      willRetry: boolean;
+      reasons: Record<string, number>;
+    }) => void;
+  } = {},
+): ReturnType<typeof generateValidatedOutfitsFromContext> {
+  const {
+    maxAttempts: requestedAttempts,
+    maxModelCalls: requestedCalls,
+    retryDeadlineMs,
+    now = Date.now,
+    onValidationFailure,
+    ...generationOptions
+  } = options;
+  const maxAttempts = Math.min(3, Math.max(1, requestedAttempts ?? 2));
+  const maxModelCalls = Math.min(OUTFIT_MAX_MODEL_CALLS_PER_REQUEST, Math.max(1, requestedCalls ?? OUTFIT_MAX_MODEL_CALLS_PER_REQUEST));
+  const deadlineMs = Math.max(0, retryDeadlineMs ?? OUTFIT_RETRY_DEADLINE_MS);
+  const startedAt = now();
+  const inner = generationOptions.client ?? defaultClient();
+  let modelCalls = 0;
+  const client: OutfitOpenAIClient = {
+    responses: {
+      create: (args) => {
+        if (modelCalls >= maxModelCalls) {
+          throw new HttpsError("failed-precondition", OUTFIT_VALIDATION_FAILURE_MESSAGE, {
+            validationErrors: ["Outfit model call budget exhausted."],
+          });
+        }
+        modelCalls += 1;
+        return inner.responses.create(args);
+      },
+    },
+  };
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await generateValidatedOutfitsFromContext(input, context, { ...generationOptions, client });
+    } catch (error) {
+      if (!isOutfitValidationFailure(error)) throw error;
+      const details = error.details as { validationErrors?: unknown } | undefined;
+      const willRetry = attempt < maxAttempts &&
+        modelCalls < maxModelCalls &&
+        now() - startedAt < deadlineMs;
+      onValidationFailure?.({
+        attempt,
+        maxAttempts,
+        modelCalls,
+        willRetry,
+        reasons: summarizeValidationFailure(details?.validationErrors),
+      });
+      if (!willRetry) throw error;
+    }
+  }
 }

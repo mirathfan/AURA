@@ -5,14 +5,21 @@ import { outfitGenerationConfig } from "../config";
 import {
   buildOutfitRetrievalPlan,
   excludeLaundryCandidates,
-  excludeStaleCandidates,
+  applyWearRotation,
+  findLaundryNotices,
   normalizeOutfitGenerationInput,
 } from "../outfitContext";
 import {
   generateValidatedOutfitsFromContext,
   type OutfitOpenAIClient,
 } from "../outfitGeneration";
-import { summarizeOutfitWeather, type OutfitWeatherBand } from "../outfitSignals";
+import {
+  isNotFreshForRole,
+  isWornTooRecently,
+  summarizeOutfitWeather,
+  type OutfitWeatherBand,
+} from "../outfitSignals";
+import { laundryNoticeText } from "../agentResponse";
 import {
   OUTFIT_ROLES,
   type NormalizedOutfitGenerationInput,
@@ -22,6 +29,7 @@ import {
   type ValidatedOutfit,
 } from "../outfitTypes";
 import {
+  HELD_OUT_LIVE_EVAL_CASES,
   LIVE_EVAL_CASES,
   LIVE_EVAL_CLOSET,
   type LiveEvalCase,
@@ -50,6 +58,9 @@ export type LiveEvalHardChecks = {
   wetUnsafeFootwear: boolean;
   repeatedRecentWear: boolean;
   usedUnwashedItem: boolean;
+  droppedKeptItem: boolean;
+  usedReplacedItem: boolean;
+  wrongForOffice: boolean;
   violationCount: number;
 };
 
@@ -60,6 +71,8 @@ export type LiveEvalArmResult = {
   durationMs: number;
   repaired: boolean;
   stylistMessage?: string;
+  // The sentence the reply adds when a requested item is in the laundry.
+  laundryNotice?: string;
   outfit?: {
     title: string;
     explanation: string;
@@ -124,6 +137,7 @@ export type LiveEvalOptions = {
   generationModel?: string;
   judgeModel?: string;
   caseIds?: string[];
+  caseSet?: LiveEvalCaseSet;
   seed?: string;
   now?: number;
   onProgress?: (message: string) => void;
@@ -131,6 +145,9 @@ export type LiveEvalOptions = {
 
 const DEFAULT_WORN_DAYS_AGO = 20;
 const WET_UNSAFE = /\b(sandal|sandals|suede|espadrille|canvas)\b/i;
+const OFFICE_WRONG = /\b(hoodie|shorts|sandals|cargo pants)\b/i;
+// Every "needs wash" piece in the eval has been worn this many times.
+const EVAL_WEARS_SINCE_WASH = 2;
 const VIOLATION_KEYS = [
   "usedLaundryItem",
   "usedAvoidedColor",
@@ -139,6 +156,9 @@ const VIOLATION_KEYS = [
   "wetUnsafeFootwear",
   "repeatedRecentWear",
   "usedUnwashedItem",
+  "droppedKeptItem",
+  "usedReplacedItem",
+  "wrongForOffice",
 ] as const;
 
 function closetById(): Map<string, LiveEvalItem> {
@@ -147,6 +167,12 @@ function closetById(): Map<string, LiveEvalItem> {
 
 function emptyBuckets(): OutfitCandidateBuckets {
   return { top: [], bottom: [], footwear: [], outerwear: [], accessory: [], one_piece: [] };
+}
+
+function caseCloset(evalCase: LiveEvalCase): LiveEvalItem[] {
+  if (!evalCase.closetItemIds?.length) return LIVE_EVAL_CLOSET;
+  const wanted = new Set(evalCase.closetItemIds);
+  return LIVE_EVAL_CLOSET.filter((entry) => wanted.has(entry.id));
 }
 
 function laundryState(evalCase: LiveEvalCase, itemId: string): "clean" | "needs_wash" | "in_laundry" {
@@ -201,7 +227,7 @@ function candidateFor(evalCase: LiveEvalCase, entry: LiveEvalItem, arm: LiveEval
     pattern: entry.pattern,
     laundryState: state,
     daysSinceWorn: evalCase.wornDaysAgo?.[entry.id] ?? DEFAULT_WORN_DAYS_AGO,
-    wearCountSinceWash: state === "needs_wash" ? 2 : 0,
+    wearCountSinceWash: state === "needs_wash" ? EVAL_WEARS_SINCE_WASH : 0,
   };
 }
 
@@ -210,6 +236,10 @@ export function buildLiveEvalInput(evalCase: LiveEvalCase, arm: LiveEvalArm): No
     query: evalCase.query,
     count: 1,
     useStyleMemory: false,
+    // What the user selected or asked to replace is part of the request, so
+    // both arms get it.
+    requiredItemIds: evalCase.requiredItemIds,
+    avoidItemIds: evalCase.avoidItemIds,
     ...(arm === "full"
       ? { weatherContext: evalCase.weatherContext, localDate: evalCase.localDate }
       : {}),
@@ -219,16 +249,27 @@ export function buildLiveEvalInput(evalCase: LiveEvalCase, arm: LiveEvalArm): No
 export function buildLiveEvalContext(evalCase: LiveEvalCase, arm: LiveEvalArm): OutfitGenerationContext {
   const input = buildLiveEvalInput(evalCase, arm);
   let candidates = emptyBuckets();
-  for (const entry of LIVE_EVAL_CLOSET) {
+  const closet = caseCloset(evalCase);
+  for (const entry of closet) {
     candidates[entry.role].push(candidateFor(evalCase, entry, arm));
   }
   let laundryExcludedCount = 0;
   let rotationExcludedCount = 0;
+  let laundryNotices: ReturnType<typeof findLaundryNotices> | undefined;
   if (arm === "full") {
-    const filtered = excludeLaundryCandidates(candidates);
+    const inLaundry = closet.filter((entry) => laundryState(evalCase, entry.id) === "in_laundry");
+    laundryNotices = findLaundryNotices({
+      userText: input.userText,
+      requiredItemIds: input.requiredItemIds,
+      laundryItems: inLaundry.map((entry) => ({ itemId: entry.id, name: entry.name, subcategory: entry.subcategory })),
+      availableSubcategories: closet
+        .filter((entry) => laundryState(evalCase, entry.id) !== "in_laundry")
+        .map((entry) => entry.subcategory),
+    });
+    const filtered = excludeLaundryCandidates(candidates, input.requiredItemIds);
     candidates = filtered.buckets;
     laundryExcludedCount = filtered.excludedCount;
-    const rotated = excludeStaleCandidates(candidates, { query: input.query });
+    const rotated = applyWearRotation(candidates, { userText: input.userText, keepItemIds: input.requiredItemIds });
     candidates = rotated.buckets;
     rotationExcludedCount = rotated.excludedCount;
   }
@@ -240,6 +281,9 @@ export function buildLiveEvalContext(evalCase: LiveEvalCase, arm: LiveEvalArm): 
     diagnostics: {
       ...(laundryExcludedCount ? { laundryExcludedCount } : {}),
       ...(rotationExcludedCount ? { rotationExcludedCount } : {}),
+      ...(laundryNotices && (laundryNotices.namedInLaundry.length || laundryNotices.selectedInLaundry.length)
+        ? { laundryNotices }
+        : {}),
       candidateLimitPerCategory: LIVE_EVAL_CLOSET.length,
       rawLimitPerCategory: LIVE_EVAL_CLOSET.length,
       missingRequiredRoles: [],
@@ -265,12 +309,14 @@ export function scoreLiveEvalHardChecks(evalCase: LiveEvalCase, itemIds: string[
   const hot = weather?.band === "hot";
   const avoid = (evalCase.avoidColors ?? []).map((color) => color.toLowerCase());
   const usedRoles = new Set(items.map((entry) => entry.role));
-  const freshAlternativeExists = (worn: LiveEvalItem) => LIVE_EVAL_CLOSET.some((other) =>
+  const closet = caseCloset(evalCase);
+  const itemIdSet = new Set(itemIds);
+  const freshAlternativeExists = (worn: LiveEvalItem) => closet.some((other) =>
     other.role === worn.role &&
     other.id !== worn.id &&
     (evalCase.wornDaysAgo?.[other.id] ?? DEFAULT_WORN_DAYS_AGO) > 2 &&
     laundryState(evalCase, other.id) !== "in_laundry");
-  const cleanAlternativeExists = (used: LiveEvalItem) => LIVE_EVAL_CLOSET.some((other) =>
+  const cleanAlternativeExists = (used: LiveEvalItem) => closet.some((other) =>
     other.role === used.role && other.id !== used.id && laundryState(evalCase, other.id) === "clean");
   const checks = {
     usedLaundryItem: items.some((entry) => laundryState(evalCase, entry.id) === "in_laundry"),
@@ -283,10 +329,22 @@ export function scoreLiveEvalHardChecks(evalCase: LiveEvalCase, itemIds: string[
     overdressedForHeat: hot && items.some((entry) => entry.warmth >= 4),
     wetUnsafeFootwear: weather?.wet === true && items.some((entry) =>
       entry.role === "footwear" && WET_UNSAFE.test(`${entry.subcategory} ${entry.material}`)),
+    // Rotation and washing follow the per-garment rules: a coat worn yesterday
+    // or shoes "worn since washing" are not violations.
     repeatedRecentWear: items.some((entry) =>
-      (evalCase.wornDaysAgo?.[entry.id] ?? DEFAULT_WORN_DAYS_AGO) <= 1 && freshAlternativeExists(entry)),
+      !evalCase.requiredItemIds?.includes(entry.id) &&
+      isWornTooRecently(entry.role, evalCase.wornDaysAgo?.[entry.id] ?? DEFAULT_WORN_DAYS_AGO) &&
+      freshAlternativeExists(entry)),
     usedUnwashedItem: items.some((entry) =>
-      laundryState(evalCase, entry.id) === "needs_wash" && cleanAlternativeExists(entry)),
+      !evalCase.requiredItemIds?.includes(entry.id) &&
+      isNotFreshForRole(entry.role, laundryState(evalCase, entry.id), EVAL_WEARS_SINCE_WASH) &&
+      cleanAlternativeExists(entry)),
+    droppedKeptItem: (evalCase.requiredItemIds ?? []).some((itemId) => !itemIdSet.has(itemId)),
+    usedReplacedItem: (evalCase.avoidItemIds ?? []).some((itemId) => itemIdSet.has(itemId)),
+    wrongForOffice: evalCase.officeRequest === true && (
+      items.some((entry) => OFFICE_WRONG.test(entry.subcategory)) ||
+      (items.some((entry) => entry.role === "top" && /\bt-shirt\b/.test(entry.subcategory)) && !usedRoles.has("outerwear"))
+    ),
   };
   return {
     ...checks,
@@ -306,9 +364,11 @@ async function runArm(
 ): Promise<LiveEvalArmResult> {
   const startedAt = Date.now();
   try {
+    const context = buildLiveEvalContext(evalCase, arm);
+    const laundryNotice = laundryNoticeText(context.diagnostics.laundryNotices);
     const generated = await generateValidatedOutfitsFromContext(
       buildLiveEvalInput(evalCase, arm),
-      buildLiveEvalContext(evalCase, arm),
+      context,
       { client },
     );
     const outfit: ValidatedOutfit | undefined = generated.outfits[0];
@@ -325,6 +385,7 @@ async function runArm(
       durationMs: Date.now() - startedAt,
       repaired: generated.repaired,
       ...(generated.stylistMessage ? { stylistMessage: generated.stylistMessage } : {}),
+      ...(laundryNotice ? { laundryNotice } : {}),
       outfit: { title: outfit.title, explanation: outfit.explanation.slice(0, 400), items },
       checks: scoreLiveEvalHardChecks(evalCase, items.map((entry) => entry.itemId)),
     };
@@ -520,10 +581,15 @@ export function summarizeLiveEval(cases: LiveEvalCaseResult[]): LiveEvalSummary 
   };
 }
 
-export function selectLiveEvalCases(caseIds?: string[]): LiveEvalCase[] {
-  if (!caseIds?.length) return LIVE_EVAL_CASES;
+export type LiveEvalCaseSet = "core" | "heldout" | "all";
+
+export function selectLiveEvalCases(caseIds?: string[], set: LiveEvalCaseSet = "core"): LiveEvalCase[] {
+  const all = [...LIVE_EVAL_CASES, ...HELD_OUT_LIVE_EVAL_CASES];
+  if (!caseIds?.length) {
+    return set === "all" ? all : set === "heldout" ? HELD_OUT_LIVE_EVAL_CASES : LIVE_EVAL_CASES;
+  }
   const wanted = new Set(caseIds);
-  const selected = LIVE_EVAL_CASES.filter((entry) => wanted.has(entry.id));
+  const selected = all.filter((entry) => wanted.has(entry.id));
   const unknown = caseIds.filter((id) => !selected.some((entry) => entry.id === id));
   if (unknown.length) throw new Error(`Unknown live eval case id(s): ${unknown.join(", ")}`);
   return selected;
@@ -541,7 +607,7 @@ export async function runLiveEval(options: LiveEvalOptions): Promise<LiveEvalRep
   const generationClient = withModel(options.generationClient, options.generationModel);
   const judgeModel = options.judgeClient ? options.judgeModel ?? "gpt-5.4" : null;
   const results: LiveEvalCaseResult[] = [];
-  for (const evalCase of selectLiveEvalCases(options.caseIds)) {
+  for (const evalCase of selectLiveEvalCases(options.caseIds, options.caseSet)) {
     options.onProgress?.(`case ${evalCase.id}: generating`);
     const [baseline, full] = await Promise.all([
       runArm(evalCase, "baseline", generationClient),
@@ -550,7 +616,7 @@ export async function runLiveEval(options: LiveEvalOptions): Promise<LiveEvalRep
     const result: LiveEvalCaseResult = {
       caseId: evalCase.id,
       query: evalCase.query,
-      notes: evalCase.notes,
+      notes: evalCase.heldOut ? `[held-out] ${evalCase.notes}` : evalCase.notes,
       arms: { baseline, full },
     };
     if (options.judgeClient && judgeModel && baseline.ok && full.ok) {
@@ -634,6 +700,7 @@ export function renderLiveEvalMarkdown(report: LiveEvalReport): string {
       `- Baseline: ${outfitLine(entry.arms.baseline)} (violations: ${violationList(entry.arms.baseline.checks)})`,
       `- Full: ${outfitLine(entry.arms.full)} (violations: ${violationList(entry.arms.full.checks)})`,
       ...(entry.arms.full.stylistMessage ? [`- Stylist reply: ${entry.arms.full.stylistMessage}`] : []),
+      ...(entry.arms.full.laundryNotice ? [`- Laundry notice added to the reply: ${entry.arms.full.laundryNotice}`] : []),
       ...(entry.judge ? [`- Judge: ${entry.judge.winner}. ${entry.judge.reason}`] : []),
       ...(entry.judgeError ? [`- Judge error: ${entry.judgeError}`] : []),
       "",

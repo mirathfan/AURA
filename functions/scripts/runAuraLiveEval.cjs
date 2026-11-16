@@ -11,6 +11,7 @@
 //   node scripts/runAuraLiveEval.cjs --confirm-spend      run it
 // Options:
 //   --cases id1,id2        only these cases
+//   --set core|heldout|all which case set to run (default core)
 //   --no-judge             skip the blind judge
 //   --generation-model m   override the outfit model
 //   --judge-model m        judge model (default gpt-5.4)
@@ -31,7 +32,8 @@ async function main() {
   }
   const caseIds = arg("--cases") ? arg("--cases").split(",").map((id) => id.trim()).filter(Boolean) : undefined;
   const withJudge = !process.argv.includes("--no-judge");
-  const cases = liveEval.selectLiveEvalCases(caseIds);
+  const caseSet = ["core", "heldout", "all"].includes(arg("--set")) ? arg("--set") : "core";
+  const cases = liveEval.selectLiveEvalCases(caseIds, caseSet);
   const calls = liveEval.estimateLiveEvalCalls(cases.length, withJudge);
   console.log(`Live eval plan: ${cases.length} case(s), ${calls.minimum}-${calls.maximum} model calls${withJudge ? " including the judge" : ""}.`);
   console.log("Only synthetic eval data is sent. No user data is read.");
@@ -52,6 +54,7 @@ async function main() {
     generationModel: arg("--generation-model"),
     judgeModel: arg("--judge-model"),
     caseIds,
+    caseSet,
     seed: arg("--seed"),
     onProgress: (message) => console.log(message),
   });

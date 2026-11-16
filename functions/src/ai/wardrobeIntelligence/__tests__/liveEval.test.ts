@@ -12,10 +12,11 @@ import {
   scoreLiveEvalHardChecks,
   selectLiveEvalCases,
 } from "../evals/liveEval";
-import { LIVE_EVAL_CASES, LIVE_EVAL_CLOSET } from "../evals/liveEvalCases";
+import { HELD_OUT_LIVE_EVAL_CASES, LIVE_EVAL_CASES, LIVE_EVAL_CLOSET } from "../evals/liveEvalCases";
+import { laundryNoticeText } from "../agentResponse";
 
 function caseById(id: string) {
-  const found = LIVE_EVAL_CASES.find((entry) => entry.id === id);
+  const found = [...LIVE_EVAL_CASES, ...HELD_OUT_LIVE_EVAL_CASES].find((entry) => entry.id === id);
   if (!found) throw new Error(`missing case ${id}`);
   return found;
 }
@@ -280,5 +281,83 @@ describe("runLiveEval", () => {
   it("estimates the number of billed calls", () => {
     expect(estimateLiveEvalCalls(12, true)).toEqual({ minimum: 36, maximum: 60 });
     expect(estimateLiveEvalCalls(12, false)).toEqual({ minimum: 24, maximum: 48 });
+  });
+});
+
+describe("held-out live eval cases", () => {
+  const fullIds = (id: string) =>
+    Object.values(buildLiveEvalContext(caseById(id), "full").candidates).flat().map((entry) => entry.itemId);
+
+  it("are a separate set that only references real closet items", () => {
+    const ids = new Set(LIVE_EVAL_CLOSET.map((entry) => entry.id));
+    for (const evalCase of HELD_OUT_LIVE_EVAL_CASES) {
+      expect(evalCase.heldOut).toBe(true);
+      const referenced = [
+        ...(evalCase.closetItemIds ?? []), ...(evalCase.laundryItemIds ?? []), ...(evalCase.needsWashItemIds ?? []),
+        ...(evalCase.requiredItemIds ?? []), ...(evalCase.avoidItemIds ?? []),
+        ...(evalCase.expectLaundryNoticeItemIds ?? []), ...Object.keys(evalCase.wornDaysAgo ?? {}),
+      ];
+      expect(referenced.filter((id) => !ids.has(id))).toEqual([]);
+    }
+    expect(selectLiveEvalCases()).toHaveLength(LIVE_EVAL_CASES.length);
+    expect(selectLiveEvalCases(undefined, "heldout")).toHaveLength(HELD_OUT_LIVE_EVAL_CASES.length);
+    expect(selectLiveEvalCases(undefined, "all")).toHaveLength(LIVE_EVAL_CASES.length + HELD_OUT_LIVE_EVAL_CASES.length);
+    expect(selectLiveEvalCases(["heldout-missing-weather"])).toHaveLength(1);
+  });
+
+  it("small closet: keeps the only warm pieces even though they were just worn", () => {
+    const ids = fullIds("heldout-small-closet-cold");
+    expect(ids).toHaveLength(6);
+    expect(ids).toEqual(expect.arrayContaining(["live-charcoal-knit", "live-brown-boots", "live-black-puffer"]));
+    expect(fullIds("heldout-small-closet-all-worn")).toHaveLength(4);
+  });
+
+  it("named laundry items: left out and explained", () => {
+    const coat = buildLiveEvalContext(caseById("heldout-named-laundry-coat"), "full");
+    expect(fullIds("heldout-named-laundry-coat")).not.toContain("live-camel-coat");
+    expect(laundryNoticeText(coat.diagnostics.laundryNotices)).toMatch(/Camel Wool Overcoat is in the laundry/);
+    const jeans = buildLiveEvalContext(caseById("heldout-named-laundry-kind"), "full");
+    expect(laundryNoticeText(jeans.diagnostics.laundryNotices)).toMatch(/Dark Indigo Straight Jeans is in the laundry/);
+    // No notice when nothing asked for is in the laundry.
+    expect(buildLiveEvalContext(caseById("laundry-plus-cold"), "full").diagnostics.laundryNotices).toBeUndefined();
+  });
+
+  it("outerwear reuse: worn-yesterday coats stay available and are not violations", () => {
+    const ids = fullIds("heldout-outerwear-reuse");
+    expect(ids).toEqual(expect.arrayContaining(["live-black-puffer", "live-camel-coat"]));
+    expect(scoreLiveEvalHardChecks(caseById("heldout-outerwear-reuse"), [
+      "live-charcoal-knit", "live-dark-denim", "live-brown-boots", "live-black-puffer",
+    ]).violationCount).toBe(0);
+    expect(scoreLiveEvalHardChecks(caseById("heldout-outerwear-reuse"), [
+      "live-white-tee", "live-dark-denim", "live-white-sneakers", "live-olive-overshirt",
+    ]).underdressedForCold).toBe(true);
+  });
+
+  it("changed occasion: weekend-only pieces fail an office request", () => {
+    const evalCase = caseById("heldout-changed-occasion-office");
+    expect(scoreLiveEvalHardChecks(evalCase, ["live-cream-hoodie", "live-black-cargos", "live-white-sneakers"]).wrongForOffice).toBe(true);
+    expect(scoreLiveEvalHardChecks(evalCase, ["live-white-tee", "live-black-trousers", "live-brown-boots"]).wrongForOffice).toBe(true);
+    expect(scoreLiveEvalHardChecks(evalCase, ["live-white-oxford", "live-black-trousers", "live-brown-boots"]).violationCount).toBe(0);
+  });
+
+  it("missing weather and tomorrow's forecast", () => {
+    const missing = buildLiveEvalInput(caseById("heldout-missing-weather"), "full");
+    expect(missing.weatherContext).toBeUndefined();
+    expect(missing.localDate).toBeUndefined();
+    const tomorrow = buildLiveEvalInput(caseById("heldout-tomorrow-forecast"), "full");
+    expect(tomorrow.targetDay).toEqual({ kind: "tomorrow", date: "2026-02-10" });
+    expect(tomorrow.weatherContext).toMatchObject({ highF: 30, forDate: "2026-02-10" });
+  });
+
+  it("shoe-only swap: kept pieces stay, replaced shoes go", () => {
+    const evalCase = caseById("heldout-shoe-only-swap");
+    for (const arm of ["baseline", "full"] as const) {
+      const input = buildLiveEvalInput(evalCase, arm);
+      expect(input.requiredItemIds).toEqual(["live-black-tee", "live-black-cargos"]);
+      expect(input.avoidItemIds).toEqual(["live-white-sneakers"]);
+    }
+    expect(scoreLiveEvalHardChecks(evalCase, ["live-black-tee", "live-black-cargos", "live-brown-boots"]).violationCount).toBe(0);
+    expect(scoreLiveEvalHardChecks(evalCase, ["live-black-tee", "live-black-cargos", "live-white-sneakers"]).usedReplacedItem).toBe(true);
+    expect(scoreLiveEvalHardChecks(evalCase, ["live-white-tee", "live-black-cargos", "live-brown-boots"]).droppedKeptItem).toBe(true);
   });
 });

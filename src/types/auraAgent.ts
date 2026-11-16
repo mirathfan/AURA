@@ -49,6 +49,10 @@ export type AuraAgentWeatherContext = {
   highF?: number;
   lowF?: number;
   condition?: string;
+  // The day this reading or forecast is for (YYYY-MM-DD).
+  forDate?: string;
+  // When it was obtained (epoch ms), so the backend can ignore stale weather.
+  observedAtMs?: number;
 };
 
 export type AuraAgentRequest = {

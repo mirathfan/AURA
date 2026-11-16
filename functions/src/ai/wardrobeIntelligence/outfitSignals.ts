@@ -2,6 +2,8 @@
 // closet (weather, date, laundry state, wear history, onboarding preferences)
 // into compact signals for outfit generation. No I/O in this file.
 
+import { resolveOutfitTargetDay, type OutfitTargetDay } from "../../../../shared/outfitTargetDay";
+
 export type OutfitWeatherBand = "freezing" | "cold" | "cool" | "mild" | "warm" | "hot";
 
 export type OutfitWeatherContext = {
@@ -9,6 +11,10 @@ export type OutfitWeatherContext = {
   highF?: number;
   lowF?: number;
   condition?: string;
+  // The day this reading or forecast is for (YYYY-MM-DD). Absent means today.
+  forDate?: string;
+  // When the app obtained it (epoch ms). Absent means age unknown.
+  observedAtMs?: number;
 };
 
 export type OutfitWeatherSummary = {
@@ -91,7 +97,104 @@ export function normalizeOutfitWeatherContext(value: unknown): OutfitWeatherCont
     ...(lowF !== undefined ? { lowF } : {}),
     ...(condition ? { condition } : {}),
   };
-  return Object.keys(context).length ? context : undefined;
+  // A date or timestamp alone is not weather.
+  if (!Object.keys(context).length) return undefined;
+  const forDate = normalizeOutfitLocalDate(data.forDate);
+  const observedAtMs = Number(data.observedAtMs);
+  return {
+    ...context,
+    ...(forDate ? { forDate } : {}),
+    ...(Number.isFinite(observedAtMs) && observedAtMs > 0 ? { observedAtMs: Math.floor(observedAtMs) } : {}),
+  };
+}
+
+// A current reading goes stale within hours; a daily forecast lasts longer.
+export const OUTFIT_WEATHER_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+export const OUTFIT_FORECAST_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const OUTFIT_WEATHER_CLOCK_SKEW_MS = 10 * 60 * 1000;
+
+export type ResolvedOutfitWeather = {
+  targetDay: OutfitTargetDay;
+  // Weather that actually applies to the day the outfit is for, or undefined.
+  weatherContext?: OutfitWeatherContext;
+  // Why supplied weather was not used. Absent when it was used or none was sent.
+  ignoredReason?: "other_day" | "wrong_date" | "stale";
+};
+
+// Decides whether the weather the app sent applies to this request. Older app
+// versions send no weather and no date; that is a normal, valid request.
+export function resolveOutfitWeather(args: {
+  userText?: string | null;
+  localDate?: string | null;
+  weatherContext?: OutfitWeatherContext | null;
+  now?: number;
+}): ResolvedOutfitWeather {
+  const targetDay = resolveOutfitTargetDay(args.userText, args.localDate);
+  const weather = args.weatherContext ?? undefined;
+  if (!weather) return { targetDay };
+  if (targetDay.kind === "other") return { targetDay, ignoredReason: "other_day" };
+  const today = normalizeOutfitLocalDate(args.localDate);
+  if (targetDay.kind === "today") {
+    if (weather.forDate && today && weather.forDate !== today) return { targetDay, ignoredReason: "wrong_date" };
+  } else if (!weather.forDate || !targetDay.date || weather.forDate !== targetDay.date) {
+    // Today's reading must never be presented as tomorrow's forecast.
+    return { targetDay, ignoredReason: "wrong_date" };
+  }
+  if (weather.observedAtMs !== undefined) {
+    const age = (args.now ?? Date.now()) - weather.observedAtMs;
+    const maxAge = targetDay.kind === "today" ? OUTFIT_WEATHER_MAX_AGE_MS : OUTFIT_FORECAST_MAX_AGE_MS;
+    if (age > maxAge || age < -OUTFIT_WEATHER_CLOCK_SKEW_MS) return { targetDay, ignoredReason: "stale" };
+  }
+  return { targetDay, weatherContext: weather };
+}
+
+// How wear rotation applies to each kind of garment. Coats and jackets are
+// worn many days running and are not washed between wears; shoes are never
+// "unwashed"; trousers are routinely worn a few times before washing.
+export type OutfitRotationRule = {
+  // Prefer something else when this was worn today or yesterday.
+  rotateRecentWear: boolean;
+  // Wears since the last wash at which the piece counts as not fresh.
+  // null: never judged on washing.
+  notFreshAfterWears: number | null;
+};
+
+const ROTATION_RULES: Record<string, OutfitRotationRule> = {
+  top: { rotateRecentWear: true, notFreshAfterWears: 1 },
+  one_piece: { rotateRecentWear: true, notFreshAfterWears: 1 },
+  bottom: { rotateRecentWear: true, notFreshAfterWears: 3 },
+  footwear: { rotateRecentWear: true, notFreshAfterWears: null },
+  outerwear: { rotateRecentWear: false, notFreshAfterWears: null },
+  accessory: { rotateRecentWear: false, notFreshAfterWears: null },
+};
+
+export function rotationRuleForRole(role: string | null | undefined): OutfitRotationRule {
+  return ROTATION_RULES[String(role ?? "")] ?? ROTATION_RULES.accessory;
+}
+
+export const ROTATION_RECENT_WEAR_DAYS = 1;
+
+export function isWornTooRecently(role: string | null | undefined, daysSinceWorn: number | null | undefined): boolean {
+  return rotationRuleForRole(role).rotateRecentWear &&
+    typeof daysSinceWorn === "number" && daysSinceWorn >= 0 && daysSinceWorn <= ROTATION_RECENT_WEAR_DAYS;
+}
+
+export function isNotFreshForRole(
+  role: string | null | undefined,
+  laundryState: OutfitLaundryState | null | undefined,
+  wearsSinceWash: number | null | undefined,
+): boolean {
+  const threshold = rotationRuleForRole(role).notFreshAfterWears;
+  if (threshold === null || laundryState !== "needs_wash") return false;
+  // "Needs wash" means worn at least once, whatever the counter says.
+  const wears = typeof wearsSinceWash === "number" && wearsSinceWash >= 1 ? wearsSinceWash : 1;
+  return wears >= threshold;
+}
+
+// The user asked for rotation outright, so it is a constraint, not a preference.
+export function hasHardRotationRequest(userText: string | null | undefined): boolean {
+  return /\b(haven'?t worn|have not worn|not worn (lately|recently|this week)|never worn|unworn|don'?t repeat|do not repeat|no repeats?|nothing i('ve| have)? (just )?worn|something i haven'?t|only clean|freshly washed)\b/
+    .test(String(userText ?? "").toLowerCase());
 }
 
 export function weatherBandForTempF(tempF: number): OutfitWeatherBand {

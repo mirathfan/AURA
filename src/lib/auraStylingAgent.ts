@@ -1,4 +1,5 @@
 import { AI_CONSENT_MESSAGE, AI_CONSENT_REQUIRED } from "../../shared/aiConsent";
+import { resolveOutfitTargetDay } from "../../shared/outfitTargetDay";
 import { requireClientAiConsent } from "../privacy/consentClient";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
@@ -310,7 +311,13 @@ function cleanWeatherContext(value: AuraAgentRequest["weatherContext"]): AuraAge
     ...(lowF !== undefined ? { lowF } : {}),
     ...(condition ? { condition } : {}),
   };
-  return Object.keys(context).length ? context : undefined;
+  if (!Object.keys(context).length) return undefined;
+  const observedAtMs = Number(value.observedAtMs);
+  return {
+    ...context,
+    ...(/^\d{4}-\d{2}-\d{2}$/.test(String(value.forDate ?? "")) ? { forDate: value.forDate } : {}),
+    ...(Number.isFinite(observedAtMs) && observedAtMs > 0 ? { observedAtMs: Math.floor(observedAtMs) } : {}),
+  };
 }
 
 function needsLiveOutfitContext(mode: AuraAgentRequest["mode"]) {
@@ -318,20 +325,27 @@ function needsLiveOutfitContext(mode: AuraAgentRequest["mode"]) {
 }
 
 // Outfit requests carry today's date and, when it is quickly available, the
-// weather. Callers that already supply either keep their own values.
+// weather for the day the outfit is for: today, or tomorrow's forecast when
+// the user asks about tomorrow. For any other day (a trip, the weekend) no
+// weather is sent, because today's says nothing about it. Callers that already
+// supply weather keep their own values.
 async function withLiveOutfitContext(input: AuraAgentRequest): Promise<AuraAgentRequest> {
   if (!needsLiveOutfitContext(input.mode)) return input;
+  const localDate = input.localDate ?? localDateKey();
   let weatherContext = input.weatherContext;
   if (!weatherContext && !input.weather) {
-    try {
-      weatherContext = await getAuraAgentWeatherContext();
-    } catch {
-      weatherContext = undefined;
+    const target = resolveOutfitTargetDay(input.query, localDate);
+    if (target.kind !== "other" && target.date) {
+      try {
+        weatherContext = await getAuraAgentWeatherContext({ dateKey: target.date });
+      } catch {
+        weatherContext = undefined;
+      }
     }
   }
   return {
     ...input,
-    localDate: input.localDate ?? localDateKey(),
+    localDate,
     ...(weatherContext ? { weatherContext } : {}),
   };
 }

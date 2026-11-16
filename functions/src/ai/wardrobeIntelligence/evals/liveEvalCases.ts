@@ -34,6 +34,17 @@ export type LiveEvalCase = {
   // itemId -> days since last worn. Items not listed were worn 20 days ago.
   wornDaysAgo?: Record<string, number>;
   avoidColors?: string[];
+  // Held-out cases are never used to tune the prompt or the rules.
+  heldOut?: boolean;
+  // Restrict the closet to these items (small-closet scenarios).
+  closetItemIds?: string[];
+  // Pieces the user selected to keep, and pieces they asked to replace.
+  requiredItemIds?: string[];
+  avoidItemIds?: string[];
+  // The request is for the office: casual-only pieces are wrong.
+  officeRequest?: boolean;
+  // Laundry items the reply must explain, because the user asked for them.
+  expectLaundryNoticeItemIds?: string[];
   // Weather the outfit should actually be judged against when the request
   // states something different from the live reading.
   judgedWeather?: { band: "freezing" | "cold" | "cool" | "mild" | "warm" | "hot"; wet: boolean; text: string };
@@ -277,6 +288,101 @@ export const LIVE_EVAL_CASES: LiveEvalCase[] = [
     notes: "Mild, dry day with nothing unusual. Control case: both arms should do well.",
     weatherContext: { tempF: 68, condition: "Clear" },
     localDate: "2026-05-12",
+    userPreferences: RELAXED_STREETWEAR,
+  },
+];
+
+// Held-out scenarios. They were written after the rules and prompt were
+// settled and must not be used to tune either.
+export const HELD_OUT_LIVE_EVAL_CASES: LiveEvalCase[] = [
+  {
+    id: "heldout-small-closet-cold",
+    heldOut: true,
+    query: "what should I wear today",
+    notes: "Six-item closet on a freezing day. The only warm top and the boots were just worn; rotation must not remove them.",
+    closetItemIds: [
+      "live-white-tee", "live-charcoal-knit", "live-dark-denim",
+      "live-white-sneakers", "live-brown-boots", "live-black-puffer",
+    ],
+    weatherContext: { tempF: 30, condition: "Clear" },
+    localDate: "2026-01-12",
+    wornDaysAgo: { "live-charcoal-knit": 1, "live-brown-boots": 0 },
+    userPreferences: RELAXED_STREETWEAR,
+  },
+  {
+    id: "heldout-small-closet-all-worn",
+    heldOut: true,
+    query: "casual outfit for today",
+    notes: "Four-item closet and everything was worn yesterday. An outfit must still come back.",
+    closetItemIds: ["live-white-tee", "live-black-tee", "live-dark-denim", "live-white-sneakers"],
+    weatherContext: { tempF: 70, condition: "Clear" },
+    localDate: "2026-05-04",
+    wornDaysAgo: { "live-white-tee": 1, "live-black-tee": 1, "live-dark-denim": 1, "live-white-sneakers": 1 },
+  },
+  {
+    id: "heldout-named-laundry-coat",
+    heldOut: true,
+    query: "dinner outfit with my camel wool overcoat",
+    notes: "The user names a coat that is in the laundry. It must not be used, and the reply must say why.",
+    weatherContext: { tempF: 36, condition: "Clear" },
+    localDate: "2026-12-11",
+    laundryItemIds: ["live-camel-coat"],
+    expectLaundryNoticeItemIds: ["live-camel-coat"],
+  },
+  {
+    id: "heldout-named-laundry-kind",
+    heldOut: true,
+    query: "something relaxed with jeans",
+    notes: "The only jeans are in the laundry. They must not be used, and the reply must say so.",
+    weatherContext: { tempF: 60, condition: "Cloudy" },
+    localDate: "2026-10-02",
+    laundryItemIds: ["live-dark-denim"],
+    expectLaundryNoticeItemIds: ["live-dark-denim"],
+  },
+  {
+    id: "heldout-outerwear-reuse",
+    heldOut: true,
+    query: "what should I wear today",
+    notes: "Freezing, and both warm coats were worn yesterday and count as worn since washing. A warm coat is still the right answer.",
+    weatherContext: { tempF: 24, condition: "Snow" },
+    localDate: "2026-01-20",
+    wornDaysAgo: { "live-black-puffer": 1, "live-camel-coat": 0 },
+    needsWashItemIds: ["live-black-puffer", "live-camel-coat"],
+  },
+  {
+    id: "heldout-changed-occasion-office",
+    heldOut: true,
+    query: "I was dressed for the weekend but now I need to go into the office instead",
+    notes: "The occasion changed mid-conversation. Weekend-only pieces are wrong for the office.",
+    weatherContext: { tempF: 58, condition: "Cloudy" },
+    localDate: "2026-10-14",
+    officeRequest: true,
+    userPreferences: RELAXED_STREETWEAR,
+  },
+  {
+    id: "heldout-missing-weather",
+    heldOut: true,
+    query: "dinner with friends tonight",
+    notes: "An older app: no weather and no date are sent. The request must still work.",
+  },
+  {
+    id: "heldout-tomorrow-forecast",
+    heldOut: true,
+    query: "what should I wear tomorrow",
+    notes: "Mild today but freezing tomorrow. The outfit is for tomorrow, so the forecast applies.",
+    weatherContext: { highF: 30, lowF: 18, condition: "Clear", forDate: "2026-02-10" },
+    localDate: "2026-02-09",
+    judgedWeather: { band: "freezing", wet: false, text: "freezing tomorrow, high 30°F / low 18°F; Clear" },
+  },
+  {
+    id: "heldout-shoe-only-swap",
+    heldOut: true,
+    query: "keep this outfit but give me different shoes",
+    notes: "A shoe-only swap. The tee and cargos must stay and the old sneakers must go.",
+    weatherContext: { tempF: 66, condition: "Clear" },
+    localDate: "2026-04-18",
+    requiredItemIds: ["live-black-tee", "live-black-cargos"],
+    avoidItemIds: ["live-white-sneakers"],
     userPreferences: RELAXED_STREETWEAR,
   },
 ];

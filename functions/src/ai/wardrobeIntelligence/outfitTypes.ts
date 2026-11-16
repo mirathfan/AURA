@@ -1,4 +1,5 @@
 import type { WardrobeRetrievalCategoryBucket, WardrobeRetrievalFormality } from "./retrievalTypes";
+import type { OutfitTargetDay } from "../../../../shared/outfitTargetDay";
 import type {
   OutfitLaundryState,
   OutfitUserPreferences,
@@ -29,6 +30,9 @@ export type OutfitGenerationInput = {
   count?: number;
   occasion?: string;
   weather?: string;
+  // The user's own words for this turn, without the chat context the agent
+  // appends to `query`. Used to tell what the user named or which day they mean.
+  userText?: string;
   weatherContext?: OutfitWeatherContext;
   localDate?: string;
   formality?: WardrobeRetrievalFormality;
@@ -50,6 +54,9 @@ export type NormalizedOutfitGenerationInput = {
   weather?: string;
   weatherContext?: OutfitWeatherContext;
   localDate?: string;
+  userText: string;
+  targetDay: OutfitTargetDay;
+  weatherIgnoredReason?: "other_day" | "wrong_date" | "stale";
   formality: WardrobeRetrievalFormality;
   preferredColors: string[];
   requiredColors: string[];
@@ -109,6 +116,13 @@ export type OutfitCandidate = {
   pattern?: string;
 };
 
+export type OutfitLaundryNotices = {
+  // Selected explicitly (kept, because the selection wins) but marked in the laundry.
+  selectedInLaundry: string[];
+  // Named in the request and left out because they are in the laundry.
+  namedInLaundry: string[];
+};
+
 export type OutfitCandidateBuckets = Record<OutfitRole, OutfitCandidate[]>;
 
 export type OutfitGenerationContext = {
@@ -119,6 +133,11 @@ export type OutfitGenerationContext = {
   diagnostics: {
     laundryExcludedCount?: number;
     rotationExcludedCount?: number;
+    rotationMode?: "soft" | "hard";
+    // Items the user asked for that are in the laundry. Names are the user's
+    // own item names; they go back to that user only.
+    laundryNotices?: OutfitLaundryNotices;
+    weatherIgnoredReason?: "other_day" | "wrong_date" | "stale";
     candidateLimitPerCategory: number;
     rawLimitPerCategory: number;
     missingRequiredRoles: OutfitRole[];
