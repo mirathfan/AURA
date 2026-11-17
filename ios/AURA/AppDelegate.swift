@@ -21,15 +21,19 @@ public class AppDelegate: ExpoAppDelegate {
     reactNativeFactory = factory
     bindReactNativeFactory(factory)
 
-#if os(iOS) || os(tvOS)
-    window = UIWindow(frame: UIScreen.main.bounds)
-    factory.startReactNative(
+    // The window is created by SceneDelegate once the scene connects. iOS
+    // built with Xcode 27 no longer launches apps that create their window
+    // here without adopting the scene lifecycle.
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  // Starts React Native in the scene's window. Called once, by SceneDelegate.
+  func startReactNative(in window: UIWindow, launchOptions: [UIApplication.LaunchOptionsKey: Any]?) {
+    self.window = window
+    reactNativeFactory?.startReactNative(
       withModuleName: "main",
       in: window,
       launchOptions: launchOptions)
-#endif
-
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   // Linking API
@@ -66,5 +70,62 @@ class ReactNativeDelegate: ExpoReactNativeFactoryDelegate {
 #else
     return Bundle.main.url(forResource: "main", withExtension: "jsbundle")
 #endif
+  }
+}
+
+// Owns the app's single window. Links that arrive through the scene are passed
+// to the same AppDelegate handlers that received them before, so Expo modules
+// and React Native's Linking keep working unchanged.
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+  var window: UIWindow?
+
+  private var appDelegate: AppDelegate? {
+    UIApplication.shared.delegate as? AppDelegate
+  }
+
+  func scene(
+    _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    guard let windowScene = scene as? UIWindowScene, let appDelegate = appDelegate else { return }
+    let window = UIWindow(windowScene: windowScene)
+    self.window = window
+
+    // A link that cold-starts the app is no longer in the launch options, so
+    // rebuild them for React Native's Linking.getInitialURL().
+    var launchOptions: [UIApplication.LaunchOptionsKey: Any] = [:]
+    if let urlContext = connectionOptions.urlContexts.first {
+      launchOptions[.url] = urlContext.url
+      if let source = urlContext.options.sourceApplication {
+        launchOptions[.sourceApplication] = source
+      }
+    }
+    if let userActivity = connectionOptions.userActivities.first {
+      launchOptions[.userActivityDictionary] = [
+        "UIApplicationLaunchOptionsUserActivityTypeKey": userActivity.activityType,
+        "UIApplicationLaunchOptionsUserActivityKey": userActivity,
+      ]
+    }
+    appDelegate.startReactNative(in: window, launchOptions: launchOptions.isEmpty ? nil : launchOptions)
+  }
+
+  func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+    guard let appDelegate = appDelegate else { return }
+    for context in URLContexts {
+      var options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+      if let source = context.options.sourceApplication {
+        options[.sourceApplication] = source
+      }
+      if let annotation = context.options.annotation {
+        options[.annotation] = annotation
+      }
+      options[.openInPlace] = context.options.openInPlace
+      _ = appDelegate.application(UIApplication.shared, open: context.url, options: options)
+    }
+  }
+
+  func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+    _ = appDelegate?.application(UIApplication.shared, continue: userActivity, restorationHandler: { _ in })
   }
 }
