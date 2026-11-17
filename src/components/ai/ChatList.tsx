@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
-import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, RefreshControl, Text, View } from "react-native";
+import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, Pressable, RefreshControl, Text, View, type ViewToken } from "react-native";
 
-import type { AppColors } from "@/constants/theme";
+import { Fonts, type AppColors } from "@/constants/theme";
 import { AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import { captureSafeException } from "@/src/lib/sentry";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -10,7 +10,12 @@ import type { AuraAgentOutfit, AuraAgentSuggestedAction } from "@/src/types/aura
 
 import ChatMessage from "./ChatMessage";
 import type { AIMessage, ChatMessageActionAnchor } from "./chatTypes";
-import { getAuraChatBottomPadding, shouldShowAuraTypingBubble } from "./chatListLayout";
+import {
+  decideAuraReplyReveal,
+  getAuraChatBottomPadding,
+  isAuraOutfitReply,
+  shouldShowAuraTypingBubble,
+} from "./chatListLayout";
 
 const FOLLOW_DISTANCE_THRESHOLD = 96;
 const FOCUS_MESSAGE_VIEW_POSITION = 0;
@@ -67,7 +72,7 @@ class ChatErrorBoundary extends React.Component<
   }
 }
 
-function TypingBubble({ colors }: { colors: AppColors }) {
+function TypingBubble({ colors, label }: { colors: AppColors; label?: string | null }) {
   const pulse = useRef(new Animated.Value(0.4)).current;
 
   useEffect(() => {
@@ -84,6 +89,10 @@ function TypingBubble({ colors }: { colors: AppColors }) {
   return (
     <View style={{ alignItems: "flex-start", paddingHorizontal: 10 }}>
       <View
+        accessible
+        accessibilityRole="text"
+        accessibilityLiveRegion="polite"
+        accessibilityLabel={label ?? "AURA is working"}
         style={{
           borderRadius: 20,
           paddingHorizontal: 14,
@@ -92,7 +101,8 @@ function TypingBubble({ colors }: { colors: AppColors }) {
           borderWidth: 0.75,
           borderColor: colors.borderSoft,
           gap: 9,
-          width: 178,
+          minWidth: 178,
+          maxWidth: "86%",
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -112,7 +122,16 @@ function TypingBubble({ colors }: { colors: AppColors }) {
             />
           ))}
         </View>
-        <AuraSkeletonLine width="72%" height={8} />
+        {label ? (
+          <Text
+            numberOfLines={2}
+            style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, fontFamily: Fonts.sans }}
+          >
+            {label}
+          </Text>
+        ) : (
+          <AuraSkeletonLine width="72%" height={8} />
+        )}
       </View>
     </View>
   );
@@ -124,6 +143,7 @@ export default function ChatList({
   itemsById,
   savingId,
   loading,
+  loadingLabel,
   memoryHint,
   contentBottomPadding,
   autoScrollSignal = 0,
@@ -151,6 +171,8 @@ export default function ChatList({
   itemsById: Map<string, ClothingItem>;
   savingId: string | null;
   loading: boolean;
+  // What the app is really doing right now, shown in the pending bubble.
+  loadingLabel?: string | null;
   memoryHint?: string | null;
   contentBottomPadding: number;
   autoScrollSignal?: number;
@@ -192,7 +214,15 @@ export default function ChatList({
   const lastInsetScrollKeyRef = useRef<string | null>(null);
   const dismissedFocusMessageIdRef = useRef<string | null>(null);
   const loadingRef = useRef(loading);
+  const previousLoadingRef = useRef(loading);
   const messagesRef = useRef(messages);
+  // Reply reveal: did the user scroll since their last message, can they
+  // still see it, and are they at the bottom.
+  const userScrolledThisTurnRef = useRef(false);
+  const nearBottomRef = useRef(true);
+  const viewableIdsRef = useRef<Set<string>>(new Set());
+  const unseenReplyIdRef = useRef<string | null>(null);
+  const [unseenReplyId, setUnseenReplyId] = React.useState<string | null>(null);
   const [listViewportHeight, setListViewportHeight] = React.useState(0);
   const [activeFocusAnchorId, setActiveFocusAnchorId] = React.useState<string | null>(null);
   const messageCount = messages.length;
@@ -253,6 +283,7 @@ export default function ChatList({
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height);
     const nearBottom = distanceFromBottom < FOLLOW_DISTANCE_THRESHOLD;
+    nearBottomRef.current = nearBottom;
     if (userInteractingRef.current || nearBottom) {
       shouldFollowRef.current = nearBottom;
     }
@@ -260,6 +291,7 @@ export default function ChatList({
 
   const handleScrollBeginDrag = useCallback(() => {
     userInteractingRef.current = true;
+    userScrolledThisTurnRef.current = true;
     focusAnchorActiveRef.current = false;
     dismissedFocusMessageIdRef.current = focusMessageId ?? activeFocusAnchorId;
     if (focusAnchorReleaseTimerRef.current) {
@@ -369,13 +401,68 @@ export default function ChatList({
       clearTimeout(focusAnchorReleaseTimerRef.current);
       focusAnchorReleaseTimerRef.current = null;
     }
-    shouldFollowRef.current = true;
     setActiveFocusAnchorId(null);
+    // An outfit reply is revealed from its top by the effect below; jumping
+    // to the bottom would land under the picture.
+    const currentMessages = messagesRef.current;
+    if (isAuraOutfitReply(currentMessages[currentMessages.length - 1])) return;
+    shouldFollowRef.current = true;
     const timer = setTimeout(() => {
       if (!userInteractingRef.current) scrollToBottom(false);
     }, 80);
     return () => clearTimeout(timer);
   }, [activeFocusAnchorId, loading, scrollToBottom]);
+
+  // A new message from the user starts a new turn.
+  useEffect(() => {
+    userScrolledThisTurnRef.current = false;
+    unseenReplyIdRef.current = null;
+    setUnseenReplyId(null);
+  }, [focusMessageId]);
+
+  // When an outfit reply lands, bring its top into view, unless the user has
+  // scrolled away to read earlier messages. Then leave them where they are
+  // and offer a way to jump to it.
+  useEffect(() => {
+    const wasLoading = previousLoadingRef.current;
+    previousLoadingRef.current = loading;
+    if (!wasLoading || loading) return;
+    const currentMessages = messagesRef.current;
+    const reply = currentMessages[currentMessages.length - 1];
+    if (!isAuraOutfitReply(reply)) return;
+    const decision = decideAuraReplyReveal({
+      userScrolledThisTurn: userScrolledThisTurnRef.current,
+      questionVisible: focusMessageId ? viewableIdsRef.current.has(focusMessageId) : true,
+      nearBottom: nearBottomRef.current,
+    });
+    if (decision === "hold") {
+      unseenReplyIdRef.current = reply.id;
+      setUnseenReplyId(reply.id);
+      return;
+    }
+    // Later size changes (images loading) must not pull the list to the bottom.
+    shouldFollowRef.current = false;
+    const timer = setTimeout(() => scrollToFocusedMessage(reply.id, true), 120);
+    return () => clearTimeout(timer);
+  }, [focusMessageId, loading, scrollToFocusedMessage]);
+
+  const handleViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    viewableIdsRef.current = new Set(viewableItems.map((entry) => String((entry.item as AIMessage | undefined)?.id ?? "")));
+    const unseen = unseenReplyIdRef.current;
+    if (unseen && viewableIdsRef.current.has(unseen)) {
+      unseenReplyIdRef.current = null;
+      setUnseenReplyId(null);
+    }
+  }).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 1 }).current;
+
+  const handleShowUnseenReply = useCallback(() => {
+    const replyId = unseenReplyIdRef.current;
+    unseenReplyIdRef.current = null;
+    setUnseenReplyId(null);
+    shouldFollowRef.current = false;
+    scrollToFocusedMessage(replyId, true);
+  }, [scrollToFocusedMessage]);
 
   useEffect(() => {
     if (!autoScrollSignal || !messageCount || !lastMessageId || !listViewportHeight) return;
@@ -565,17 +652,18 @@ export default function ChatList({
         <View>
           {showTypingBubble ? (
             <View style={{ marginTop: 12, marginBottom: 10 }}>
-              <TypingBubble colors={colors} />
+              <TypingBubble colors={colors} label={loadingLabel} />
             </View>
           ) : null}
           {focusAnchorSpacer ? <View style={{ height: focusAnchorSpacer }} /> : null}
         </View>
       );
     },
-    [colors, focusAnchorSpacer, showTypingBubble],
+    [colors, focusAnchorSpacer, loadingLabel, showTypingBubble],
   );
 
   return (
+    <View style={{ flex: 1 }}>
     <FlatList
       ref={listRef}
       style={{ flex: 1 }}
@@ -592,6 +680,8 @@ export default function ChatList({
       onContentSizeChange={handleContentSizeChange}
       onLayout={handleListLayout}
       onScrollToIndexFailed={handleScrollToIndexFailed}
+      onViewableItemsChanged={handleViewableItemsChanged}
+      viewabilityConfig={viewabilityConfig}
       contentContainerStyle={contentContainerStyle}
       scrollIndicatorInsets={scrollIndicatorInsets}
       refreshControl={
@@ -616,5 +706,31 @@ export default function ChatList({
       windowSize={7}
       showsVerticalScrollIndicator={false}
     />
+    {unseenReplyId ? (
+      <View
+        pointerEvents="box-none"
+        style={{ position: "absolute", left: 0, right: 0, bottom: Math.max(18, contentBottomPadding) + 12, alignItems: "center" }}
+      >
+        <Pressable
+          onPress={handleShowUnseenReply}
+          accessibilityRole="button"
+          accessibilityLabel="Show the new outfit"
+          hitSlop={8}
+          style={{
+            borderRadius: 999,
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            backgroundColor: colors.surfaceMuted,
+            borderWidth: 0.75,
+            borderColor: colors.borderSoft,
+          }}
+        >
+          <Text style={{ color: colors.text, fontSize: 13, fontWeight: "600", fontFamily: Fonts.sans }}>
+            New outfit ↓
+          </Text>
+        </Pressable>
+      </View>
+    ) : null}
+    </View>
   );
 }

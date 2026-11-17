@@ -66,6 +66,7 @@ import {
   runAuraStylingAgentClient,
   saveAuraAgentOutfitClient,
 } from "@/src/lib/auraStylingAgent";
+import { auraAgentStageLabel, type AuraAgentRequestStage } from "@/src/lib/auraAgentStages";
 import {
   analyticsErrorProperties,
   type AnalyticsProperties,
@@ -1929,6 +1930,11 @@ function AIScreenContent() {
     stopVoiceInput,
   } = useAuraComposerState({ uid });
   const [loading, setLoading] = useState(false);
+  // The real step an outfit request is on, for the pending bubble's text.
+  const [agentRequestStage, setAgentRequestStage] = useState<AuraAgentRequestStage | null>(null);
+  useEffect(() => {
+    if (!loading) setAgentRequestStage(null);
+  }, [loading]);
   const [pendingAuraAgentAction, setPendingAuraAgentAction] = useState<{
     actionId: string;
     messageId: string;
@@ -2834,6 +2840,7 @@ function AIScreenContent() {
             }
             const agentResponse = await runAuraStylingAgentClient(
               agentRequest,
+              { onStage: setAgentRequestStage },
             );
             const assistantMessage = createAgentAssistantMessage(agentResponse, {
               id: streamingMessageId,
@@ -4533,6 +4540,7 @@ function AIScreenContent() {
           itemsById={itemsById}
           savingId={null}
           loading={loading}
+          loadingLabel={auraAgentStageLabel(agentRequestStage)}
           contentBottomPadding={chatBottomInset}
           autoScrollSignal={focusScrollSignal}
           focusMessageId={focusMessageId}

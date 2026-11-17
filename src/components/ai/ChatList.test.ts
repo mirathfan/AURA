@@ -1,5 +1,7 @@
 import {
+  decideAuraReplyReveal,
   getAuraChatBottomPadding,
+  isAuraOutfitReply,
   shouldShowAuraTypingBubble,
 } from "./chatListLayout";
 import {
@@ -103,5 +105,28 @@ describe("ChatList helpers", () => {
         kind: "aura_text",
       }),
     ).toBe(false);
+  });
+});
+
+describe("outfit reply reveal", () => {
+  it("brings a new outfit into view when the user has not scrolled", () => {
+    expect(decideAuraReplyReveal({ userScrolledThisTurn: false, questionVisible: false, nearBottom: false })).toBe("reveal");
+  });
+
+  it("still reveals when the user only nudged the list or is at the bottom", () => {
+    expect(decideAuraReplyReveal({ userScrolledThisTurn: true, questionVisible: true, nearBottom: false })).toBe("reveal");
+    expect(decideAuraReplyReveal({ userScrolledThisTurn: true, questionVisible: false, nearBottom: true })).toBe("reveal");
+  });
+
+  it("leaves the list alone when the user is reading earlier messages", () => {
+    expect(decideAuraReplyReveal({ userScrolledThisTurn: true, questionVisible: false, nearBottom: false })).toBe("hold");
+  });
+
+  it("only treats outfit replies as revealable", () => {
+    expect(isAuraOutfitReply({ type: "assistant", kind: "aura_agent" })).toBe(true);
+    expect(isAuraOutfitReply({ type: "assistant", agentResponse: { outfits: [{}] } as never })).toBe(true);
+    expect(isAuraOutfitReply({ type: "assistant", kind: "aura_text" })).toBe(false);
+    expect(isAuraOutfitReply({ type: "user", kind: "user_text" })).toBe(false);
+    expect(isAuraOutfitReply(null)).toBe(false);
   });
 });

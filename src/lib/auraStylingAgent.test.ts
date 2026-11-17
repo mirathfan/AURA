@@ -387,6 +387,22 @@ describe("aura styling agent client helpers", () => {
     expect(payload.localDate).toBe("2026-11-14");
   });
 
+  it("reports each real step of the request in order", async () => {
+    mockGetAuraAgentWeatherContext.mockResolvedValueOnce({ highF: 41, lowF: 30, condition: "Clear" });
+    const stages: string[] = [];
+    await runAuraStylingAgentClient({ query: "dinner tonight" }, { onStage: (stage) => stages.push(stage.kind) });
+    expect(stages).toEqual(["checking_weather", "styling", "finishing"]);
+  });
+
+  it("does not claim a weather check it did not make, and survives a failing listener", async () => {
+    const stages: string[] = [];
+    await runAuraStylingAgentClient(
+      { query: "outfit", weather: "rainy" },
+      { onStage: (stage) => { stages.push(stage.kind); throw new Error("listener broke"); } },
+    );
+    expect(stages).toEqual(["styling", "finishing"]);
+  });
+
   it("drops malformed weather values from the payload", () => {
     expect(buildAuraAgentCallablePayload({
       query: "outfit",

@@ -15,6 +15,7 @@ import {
 } from "@/src/lib/auraHardening";
 import { getAuraAgentEnabledFlagValue, isAuraAgentEnabledFlag } from "@/src/lib/auraAgentRouteDiagnostics";
 import { getAuraAgentWeatherContext, localDateKey } from "@/src/lib/auraAgentWeather";
+import { withStillWorkingStage, type AuraAgentRequestStage } from "@/src/lib/auraAgentStages";
 import type {
   AuraOutfitWeatherContext,
   AuraOutfitWeatherWarning,
@@ -100,6 +101,8 @@ export class AuraAgentClientError extends Error {
 
 type RunAuraStylingAgentOptions = {
   timeoutMs?: number;
+  // Called as each real step of the request starts, to drive loading text.
+  onStage?: (stage: AuraAgentRequestStage) => void;
 };
 
 export type SaveAuraAgentOutfitInput = {
@@ -329,13 +332,18 @@ function needsLiveOutfitContext(mode: AuraAgentRequest["mode"]) {
 // the user asks about tomorrow. For any other day (a trip, the weekend) no
 // weather is sent, because today's says nothing about it. Callers that already
 // supply weather keep their own values.
-async function withLiveOutfitContext(input: AuraAgentRequest): Promise<AuraAgentRequest> {
+async function withLiveOutfitContext(
+  input: AuraAgentRequest,
+  onStage?: (stage: AuraAgentRequestStage) => void,
+): Promise<AuraAgentRequest> {
   if (!needsLiveOutfitContext(input.mode)) return input;
   const localDate = input.localDate ?? localDateKey();
   let weatherContext = input.weatherContext;
   if (!weatherContext && !input.weather) {
     const target = resolveOutfitTargetDay(input.query, localDate);
     if (target.kind !== "other" && target.date) {
+      // Reported only when a lookup is actually made.
+      onStage?.({ kind: "checking_weather", day: target.kind });
       try {
         weatherContext = await getAuraAgentWeatherContext({ dateKey: target.date });
       } catch {
@@ -508,7 +516,17 @@ export async function runAuraStylingAgentClient(
     throw authError;
   }
 
-  const payload = buildAuraAgentCallablePayload(await withLiveOutfitContext(input));
+  const onStage = options.onStage
+    ? (stage: AuraAgentRequestStage) => {
+      // Loading text must never break a request.
+      try {
+        options.onStage?.(stage);
+      } catch {
+        // ignore
+      }
+    }
+    : undefined;
+  const payload = buildAuraAgentCallablePayload(await withLiveOutfitContext(input, onStage));
   const timeoutMs = Math.max(1, options.timeoutMs ?? AURA_AGENT_DEFAULT_TIMEOUT_MS);
   devAgentLog("request payload", {
     payload,
@@ -522,7 +540,12 @@ export async function runAuraStylingAgentClient(
       functions,
       AURA_AGENT_CALLABLE_NAME,
     );
-    const result = await withAuraAgentTimeout(callable(payload), timeoutMs, user, AURA_AGENT_CALLABLE_NAME);
+    onStage?.({ kind: "styling" });
+    const result = await withStillWorkingStage(
+      withAuraAgentTimeout(callable(payload), timeoutMs, user, AURA_AGENT_CALLABLE_NAME),
+      onStage,
+    );
+    onStage?.({ kind: "finishing" });
     if (!isAuraAgentResponse(result.data)) {
       throw new AuraAgentClientError(AURA_AGENT_FALLBACK_MESSAGE, {
         code: "aura-agent/empty-response",
