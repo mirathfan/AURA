@@ -4542,6 +4542,7 @@ function AIScreenContent() {
           loading={loading}
           loadingLabel={auraAgentStageLabel(agentRequestStage)}
           contentBottomPadding={chatBottomInset}
+          floatingBottomOffset={chatBottomInset - CHAT_BOTTOM_BREATHING_ROOM}
           autoScrollSignal={focusScrollSignal}
           focusMessageId={focusMessageId}
           emptyState={emptyChatState}

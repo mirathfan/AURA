@@ -146,6 +146,7 @@ export default function ChatList({
   loadingLabel,
   memoryHint,
   contentBottomPadding,
+  floatingBottomOffset,
   autoScrollSignal = 0,
   focusMessageId,
   emptyState,
@@ -175,6 +176,9 @@ export default function ChatList({
   loadingLabel?: string | null;
   memoryHint?: string | null;
   contentBottomPadding: number;
+  // Height of whatever covers the bottom of the list (composer, tab bar), so
+  // floating controls can sit just above it. Defaults to the content padding.
+  floatingBottomOffset?: number;
   autoScrollSignal?: number;
   focusMessageId?: string | null;
   emptyState?: React.ReactElement;
@@ -222,6 +226,9 @@ export default function ChatList({
   const nearBottomRef = useRef(true);
   const viewableIdsRef = useRef<Set<string>>(new Set());
   const unseenReplyIdRef = useRef<string | null>(null);
+  // The outfit reply this turn's reveal has taken charge of. While it is the
+  // last message, the generic "follow the bottom" effects must stand down.
+  const revealedReplyIdRef = useRef<string | null>(null);
   const [unseenReplyId, setUnseenReplyId] = React.useState<string | null>(null);
   const [listViewportHeight, setListViewportHeight] = React.useState(0);
   const [activeFocusAnchorId, setActiveFocusAnchorId] = React.useState<string | null>(null);
@@ -413,9 +420,13 @@ export default function ChatList({
     return () => clearTimeout(timer);
   }, [activeFocusAnchorId, loading, scrollToBottom]);
 
-  // A new message from the user starts a new turn.
+  // A new message from the user starts a new turn. The screen also clears
+  // focusMessageId once a reply lands; that is not a new turn and must not
+  // undo the reveal.
   useEffect(() => {
+    if (!focusMessageId) return;
     userScrolledThisTurnRef.current = false;
+    revealedReplyIdRef.current = null;
     unseenReplyIdRef.current = null;
     setUnseenReplyId(null);
   }, [focusMessageId]);
@@ -430,12 +441,16 @@ export default function ChatList({
     const currentMessages = messagesRef.current;
     const reply = currentMessages[currentMessages.length - 1];
     if (!isAuraOutfitReply(reply)) return;
+    revealedReplyIdRef.current = reply.id;
+    shouldFollowRef.current = false;
     const decision = decideAuraReplyReveal({
       userScrolledThisTurn: userScrolledThisTurnRef.current,
       questionVisible: focusMessageId ? viewableIdsRef.current.has(focusMessageId) : true,
       nearBottom: nearBottomRef.current,
     });
     if (decision === "hold") {
+      // No need to point at something already on screen.
+      if (viewableIdsRef.current.has(reply.id)) return;
       unseenReplyIdRef.current = reply.id;
       setUnseenReplyId(reply.id);
       return;
@@ -467,6 +482,7 @@ export default function ChatList({
   useEffect(() => {
     if (!autoScrollSignal || !messageCount || !lastMessageId || !listViewportHeight) return;
     if (isFocusAnchoring) return;
+    if (revealedReplyIdRef.current === lastMessageId) return;
     const autoScrollKey = [
       autoScrollSignal,
       lastMessageId,
@@ -508,6 +524,7 @@ export default function ChatList({
   useEffect(() => {
     if (!messageCount || !lastMessageId || !listViewportHeight) return;
     if (isFocusAnchoring || userInteractingRef.current || !shouldFollowRef.current) return;
+    if (revealedReplyIdRef.current === lastMessageId) return;
     const insetScrollKey = [
       lastMessageId,
       messageCount,
@@ -709,7 +726,7 @@ export default function ChatList({
     {unseenReplyId ? (
       <View
         pointerEvents="box-none"
-        style={{ position: "absolute", left: 0, right: 0, bottom: Math.max(18, contentBottomPadding) + 12, alignItems: "center" }}
+        style={{ position: "absolute", left: 0, right: 0, bottom: Math.max(18, floatingBottomOffset ?? contentBottomPadding) + 12, alignItems: "center" }}
       >
         <Pressable
           onPress={handleShowUnseenReply}

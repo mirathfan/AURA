@@ -48,3 +48,7 @@ credentials.json
 ios/certs/
 *.p12
 *.mobileprovision
+
+# Firebase emulator logs
+firebase-debug.log
+firestore-debug.log
