@@ -125,12 +125,19 @@ function errorDetails(error: unknown): Record<string, unknown> {
 function selectedItemConstraintMessage(error: unknown): string | null {
   if (!(error instanceof HttpsError) || error.code !== "failed-precondition") return null;
   const details = errorDetails(error);
+  const unavailableRefinements = stringList(details.unavailableRefinements);
+  if (unavailableRefinements.length) {
+    return `I couldn't edit that look because I couldn't find ${unavailableRefinements.join(" or ")} in your ready closet items.`;
+  }
   const missing = stringList(details.missingRequiredItemIds);
   const unavailable = stringList(details.unavailableRequiredItemIds);
   const incompatible = stringList(details.incompatibleRequiredItemIds);
   const failed = stringList(details.failedRequiredItemIds);
   const validationErrors = stringList(details.validationErrors);
   const combined = `${error.message} ${validationErrors.join(" ")}`;
+  if (/requires a warm layer/.test(combined)) return "I couldn't put together the requested edit with a warm layer for the cold walk.";
+  if (/used explicitly avoided itemId/.test(combined)) return "I couldn't put together the edit with a replacement for the piece you asked me to swap.";
+  if (/outfit occasion must match/.test(combined)) return "I couldn't make that edit while keeping the requested occasion.";
   if (!missing.length && !unavailable.length && !incompatible.length && !failed.length && !/required selected item|selected closet item/i.test(combined)) {
     return null;
   }

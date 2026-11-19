@@ -94,7 +94,7 @@ export function findAuraAgentOutfitById(
   return response?.outfits?.find((outfit) => outfit.outfitId === outfitId) ?? null;
 }
 
-function referencedOutfitIndex(text: string) {
+export function referencedOutfitIndex(text: string) {
   const normalized = String(text ?? "").toLowerCase();
   const numeric = normalized.match(/\b(?:outfit|look|option|fit)\s*(\d{1,2})\b/);
   if (numeric) return Number(numeric[1]) - 1;
@@ -107,6 +107,8 @@ function referencedOutfitIndex(text: string) {
   if (/\b(?:third|3rd)\s+(?:one|outfit|look|option|fit)\b|\b(?:outfit|look|option|fit)\s+(?:three|third|3rd)\b/.test(normalized)) {
     return 2;
   }
+  if (/\b(?:fourth|4th)\s+(?:one|outfit|look|option|fit)\b|\b(?:outfit|look|option|fit)\s+four\b/.test(normalized)) return 3;
+  if (/\b(?:fifth|5th)\s+(?:one|outfit|look|option|fit)\b|\b(?:outfit|look|option|fit)\s+five\b/.test(normalized)) return 4;
   return null;
 }
 

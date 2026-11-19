@@ -9,6 +9,7 @@ import type {
   OutfitValidationWarning,
   ValidatedOutfit,
 } from "./outfitTypes";
+import { isWorkOccasion } from "./outfitSignals";
 import { isSafeOuterwearAsTop, normalizeOutfitRoleAlias } from "./outfitRole";
 
 function normalizedText(value: unknown): string {
@@ -174,7 +175,7 @@ export function getTargetFormalityRange(
   }
   if (/\b(formal|business|interview|corporate)\b/.test(text)) return [3.5, 4.5];
   if (/\b(date|dinner|night out|restaurant|evening)\b/.test(text)) return [2.5, 3.5];
-  if (/\b(office|work|professional|meeting|smart casual|smart_casual)\b/.test(text)) return [2.5, 3.5];
+  if (isWorkOccasion(text) || /\bsmart casual\b/.test(text)) return [2.5, 3.5];
   if (/\b(streetwear|street|casual)\b/.test(text)) return [1, 2.25];
   return [2, 3];
 }
@@ -198,8 +199,8 @@ function formalityFitForRange(values: number[], range: [number, number]): { scor
 }
 
 function occasionKeyForBias(input: NormalizedOutfitGenerationInput, context: OutfitGenerationContext): string {
-  const text = normalizedText(input.occasion ?? context.retrievalPlan.intent.occasion ?? input.query);
-  if (/\b(office|work|business|professional|meeting|interview)\b/.test(text)) return "office";
+  const text = normalizedText(input.occasion ?? context.retrievalPlan.intent.occasion ?? input.userText ?? input.query);
+  if (isWorkOccasion(text)) return "office";
   if (/\b(date night|date)\b/.test(text)) return "date_night";
   if (/\b(dinner|restaurant|evening)\b/.test(text)) return "dinner";
   if (/\b(streetwear|street)\b/.test(text)) return "streetwear";
@@ -466,13 +467,11 @@ export function scoreOutfitDiversity(
 }
 
 function isOfficeLike(input: NormalizedOutfitGenerationInput): boolean {
-  return /\b(office|work|interview|business|professional|meeting|corporate|workwear)\b/.test(
-    normalizedText([input.query, input.occasion].filter(Boolean).join(" ")),
-  );
+  return isWorkOccasion(normalizedText(input.occasion || input.userText || input.query));
 }
 
 function isStreetwearRequest(input: NormalizedOutfitGenerationInput): boolean {
-  return /\b(streetwear|street|sneaker|athletic|gym)\b/.test(normalizedText(input.query));
+  return /\b(streetwear|street|sneaker|athletic|gym)\b/.test(normalizedText(input.userText ?? input.query));
 }
 
 function hasRole(outfit: GeneratedOutfit, role: OutfitRole): boolean {
@@ -563,6 +562,41 @@ function avoidTermMatches(candidate: OutfitCandidate | undefined, avoidTerms: st
   });
 }
 
+function eligibleForEdit(candidate: OutfitCandidate, input: NormalizedOutfitGenerationInput): boolean {
+  return !input.avoidItemIds.includes(candidate.itemId) && !avoidTermMatches(candidate, input.avoidTerms).length;
+}
+
+// null means no explicit outdoor warmth requirement. An empty list means the
+// closet has no suitable layer. Prefer a coat for a cold walk if one is ready.
+export function warmLayerItemIds(input: NormalizedOutfitGenerationInput, context: OutfitGenerationContext): string[] | null {
+  const text = normalizedText(input.userText || input.query);
+  if (!/\b(cold|freezing|chilly|winter|snow)\b/.test(`${text} ${input.weather ?? ""}`) ||
+      !/\b(walk|walking|stroll|outside|outdoors?|commute|hike)\b/.test(text)) return null;
+  const warmInRole = (role: "outerwear" | "top") => {
+    const pool = context.candidates[role];
+    const locked = pool.filter((item) => input.requiredItemIds.includes(item.itemId));
+    return (locked.length ? locked : pool).filter((item) => {
+      if (!eligibleForEdit(item, input)) return false;
+      const rating = Number(item.aiMetadata.warmth);
+      if (rating > 0) return rating >= 4;
+      return /\b(overcoat|parka|puffer|down|insulated|fleece|thermal|wool|cashmere|merino)\b/.test(candidateText(item));
+    }).map((item) => item.itemId);
+  };
+  const coats = warmInRole("outerwear");
+  return coats.length ? coats : warmInRole("top");
+}
+
+export function unavailableRefinementConstraints(
+  input: NormalizedOutfitGenerationInput, context: OutfitGenerationContext, replacingFootwear: boolean,
+): string[] {
+  const missing: string[] = [];
+  if (replacingFootwear && !context.candidates.footwear.some((item) => eligibleForEdit(item, input))) {
+    missing.push("another eligible pair of shoes to replace the original pair");
+  }
+  if (warmLayerItemIds(input, context)?.length === 0) missing.push("a warm layer for the cold walk");
+  return missing;
+}
+
 export function validateGeneratedOutfits(
   outfits: GeneratedOutfit[],
   context: OutfitGenerationContext,
@@ -642,6 +676,15 @@ export function validateGeneratedOutfits(
       }
     }
 
+    const warmIds = warmLayerItemIds(input, context);
+    if (warmIds && !warmIds.some((id) => seen.has(id))) {
+      errors.push(`${prefix}: cold outdoor request requires a warm layer from the eligible closet items.`);
+    }
+    const dinner = /\b(date|dinner|restaurant|evening)\b/;
+    if ((dinner.test(normalizedText(input.occasion)) && isWorkOccasion(normalizedText(outfit.occasion))) ||
+        (isOfficeLike(input) && dinner.test(normalizedText(outfit.occasion)))) {
+      errors.push(`${prefix}: outfit occasion must match the requested occasion ${input.occasion}.`);
+    }
     for (const requiredItemId of requiredIds) {
       if (!seen.has(requiredItemId)) {
         errors.push(`${prefix}: missing required selected itemId ${requiredItemId}.`);
@@ -901,7 +944,7 @@ export function scoreGeneratedOutfit(
   const office = isOfficeLike(input);
   const formalityIntent = {
     formality: input.formality === "any" ? context.retrievalPlan.intent.formality : input.formality,
-    query: input.query,
+    query: input.userText ?? input.query,
     occasion: input.occasion ?? context.retrievalPlan.intent.occasion,
     weather: input.weather ?? context.retrievalPlan.intent.weather,
     styleHints: context.retrievalPlan.intent.styleHints,
@@ -911,7 +954,7 @@ export function scoreGeneratedOutfit(
   const targetFormalityRange = biasedFormality.range;
   const targetFormality = Number(((targetFormalityRange[0] + targetFormalityRange[1]) / 2).toFixed(2));
   const occasionText = normalizedText([
-    input.query,
+    input.userText ?? input.query,
     input.occasion,
     context.retrievalPlan.intent.occasion,
     ...context.retrievalPlan.intent.styleHints,
@@ -1013,7 +1056,7 @@ export function buildValidatedOutfitResponse(
           outfitId: `outfit-${index + 1}`,
           title: String(normalized.title ?? "Closet Outfit").trim() || "Closet Outfit",
           vibe: String(normalized.vibe ?? "").trim() || "closet-based",
-          occasion: String(normalized.occasion ?? input.occasion ?? context.retrievalPlan.intent.occasion ?? "outfit").trim(),
+          occasion: String(input.occasion ?? normalized.occasion ?? context.retrievalPlan.intent.occasion ?? "outfit").trim(),
           formality: fallbackFormality(normalized.formality ?? context.retrievalPlan.intent.formality),
           items: normalized.items.flatMap((item) => {
             const candidate = byId.get(item.itemId);

@@ -216,6 +216,15 @@ describe("aura styling agent client helpers", () => {
     expect(JSON.stringify(payload)).not.toContain("aiMetadata");
   });
 
+  it.each([{ saved: false, savedOutfitId: "id" }, { saved: true, savedOutfitId: " " }])(
+    "rejects an unconfirmed save response %j", async (data) => {
+      mockCallable.mockResolvedValueOnce({ data });
+      await expect(saveAuraAgentOutfitClient({ outfit }, { timeoutMs: 100 })).rejects.toMatchObject({
+        code: "aura-agent/invalid-save-response",
+      });
+    },
+  );
+
   it("uses the shorter production timeout for action callables by default", async () => {
     jest.useFakeTimers();
     mockCallable.mockImplementationOnce(() => new Promise(() => {}));

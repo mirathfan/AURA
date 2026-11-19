@@ -640,8 +640,8 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
-      match /privacy/{documentId} {
-        allow read: if isOwner(uid) && documentId == "aiConsent";
+      match /privacy/aiConsent {
+        allow get: if isOwner(uid);
         // Authenticated callable records the explicit decision and server timestamp.
         allow write: if false;
       }

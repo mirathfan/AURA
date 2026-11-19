@@ -28,23 +28,33 @@ function embeddingResponse(body) {
   });
 }
 
-function pickOutfit(prompt) {
+function pickOutfit(prompt, optionIndex) {
   const byRole = prompt.candidatesByRole || {};
   const avoid = new Set((prompt.hardConstraints && prompt.hardConstraints.avoidItemIds) || []);
   const required = new Set((prompt.hardConstraints && prompt.hardConstraints.requiredItemIds) || []);
   const all = Object.values(byRole).flat();
   const chosen = new Map();
   for (const item of all) if (required.has(item.itemId)) chosen.set(item.allowedRole, item);
-  const first = (role) => (byRole[role] || []).find((item) => !avoid.has(item.itemId));
+  const pick = (role) => {
+    const eligible = (byRole[role] || []).filter((item) => !avoid.has(item.itemId));
+    // Exercise visibly different combinations even when two closet IDs share a name.
+    const distinct = eligible.filter((item, index) => eligible.findIndex((other) =>
+      other.name === item.name) === index);
+    return distinct[optionIndex % distinct.length];
+  };
   for (const role of ["top", "bottom", "footwear"]) {
     if (!chosen.has(role)) {
-      const item = first(role);
+      const item = pick(role);
       if (item) chosen.set(role, item);
     }
   }
-  const weather = String(prompt.weatherNow || "").toLowerCase();
+  const warmIds = new Set(prompt.hardConstraints?.warmLayerItemIds || []);
+  const warm = all.find((item) => warmIds.has(item.itemId) && !avoid.has(item.itemId) &&
+    !required.has(chosen.get(item.allowedRole)?.itemId));
+  if (warm) chosen.set(warm.allowedRole, warm);
+  const weather = String(prompt.weather || prompt.weatherNow || "").toLowerCase();
   if (!chosen.has("outerwear") && /freezing|cold|cool|rain|snow/.test(weather)) {
-    const layer = first("outerwear");
+    const layer = pick("outerwear");
     if (layer) chosen.set("outerwear", layer);
   }
   return [...chosen.values()];
@@ -58,14 +68,15 @@ function responsesResponse(body) {
   } catch {
     prompt = {};
   }
-  const items = pickOutfit(prompt);
-  const names = items.map((item) => String(item.name || "piece").toLowerCase());
+  const count = Math.max(1, Math.min(3, Math.floor(Number(prompt.requestedOutfitCount) || 1)));
+  const looks = Array.from({ length: count }, (_, index) => pickOutfit(prompt, index));
+  const names = looks[0].map((item) => String(item.name || "piece").toLowerCase());
   const payload = {
     stylistMessage: names.length
       ? `Local test reply: the ${names.slice(0, 3).join(", ")} work together for this.`
       : "Local test reply.",
-    outfits: [{
-      title: "Local Test Look",
+    outfits: looks.map((items, index) => ({
+      title: count === 1 ? "Local Test Look" : `Local Test Look ${index + 1}`,
       vibe: "synthetic, local test",
       occasion: String(prompt.occasion || "everyday"),
       formality: "casual",
@@ -74,7 +85,7 @@ function responsesResponse(body) {
       stylingTips: [],
       missingItems: [],
       confidence: 0.5,
-    }],
+    })),
   };
   return json({
     id: "resp_local_stub",

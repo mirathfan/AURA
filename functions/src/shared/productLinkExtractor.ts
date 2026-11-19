@@ -2854,6 +2854,13 @@ export function looksLikeBlockedProductPage(html: string) {
   return /(?:bm-verify=|\/_sec\/verify|triggerInterstitialChallenge|<title>\s*Access Denied\s*<\/title>|verify you are human|robot check|captcha required)/i.test(sample);
 }
 
+export function isProductRedirectToStorefront(original: URL, resolved: URL) {
+  // A removed or region-unavailable product can redirect to a locale homepage
+  // with perfectly valid OG images. Those images advertise the store, not the item.
+  const storefrontPath = /^\/(?:[a-z]{2}(?:[-_][a-z]{2})?(?:\/[a-z]{2})?\/?)?$/i;
+  return !storefrontPath.test(original.pathname) && storefrontPath.test(resolved.pathname);
+}
+
 export async function fetchResolvedProductPage(url: URL): Promise<FetchedProductPage> {
   let originalStatus: number | null = null;
   let originalError: unknown = null;
@@ -2891,6 +2898,11 @@ export async function fetchResolvedProductPage(url: URL): Promise<FetchedProduct
     }
     if (looksLikeBlockedProductPage(response.text)) {
       throw blockedStoreError(response.status, url.hostname);
+    }
+    if (isProductRedirectToStorefront(url, response.finalUrl)) {
+      throw new ProductLinkError("That product link redirected to the store homepage.", "no_metadata", {
+        reason: "product_redirected_to_storefront",
+      });
     }
     return {
       html: response.text.slice(0, MAX_HTML_CHARS),

@@ -46,6 +46,7 @@ import {
   resolveReferencedOutfit,
   shouldRouteToAuraStylingAgent,
 } from "@/src/lib/auraAgentActions";
+import { resolveOutfitSave } from "@/src/lib/auraOutfitSave";
 import { getAgentDisplayMessage } from "@/src/lib/auraAgentDisplay";
 import { AURA_HARDENING_LOG_PREFIX } from "@/src/lib/auraHardening";
 import {
@@ -133,6 +134,7 @@ import {
   type WardrobeSuggestion,
 } from "@/src/lib/wardrobeSuggestions";
 import { Toast } from "@/src/lib/toast";
+import { saveDisplayedChatReply } from "@/src/lib/saveDisplayedChatReply";
 import { sanitizeMultilineDisplayText } from "@/src/lib/text";
 import { Colors } from "@/constants/theme";
 import {
@@ -871,10 +873,6 @@ function formatDateKeyForAura(dateKey: string) {
 
 function isDislikeOutfitPrompt(text: string) {
   return /\b(not\s+my\s+vibe|don'?t\s+like\s+this|do\s+not\s+like\s+this|hate\s+this|dislike\s+this|avoid\s+this\s+vibe)\b/i.test(text);
-}
-
-function isSaveOutfitPrompt(text: string) {
-  return /\b(save\s+this\s+outfit|save\s+this\s+look|save\s+outfit\s+\d+|save\s+the\s+(?:first|second|third)\s+one)\b/i.test(text);
 }
 
 function isPlanAction(action: AuraAgentSuggestedAction) {
@@ -1943,6 +1941,7 @@ function AIScreenContent() {
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
   const [lastAgentResponse, setLastAgentResponse] = useState<AuraAgentResponse | null>(null);
+  const lastCarouselSelection = React.useRef<{ messageId: string; outfitId: string } | null>(null);
   const [selectedAgentOutfit, setSelectedAgentOutfit] = useState<AuraAgentOutfit | null>(null);
   const [lastAgentOutfit, setLastAgentOutfit] = useState<AuraAgentOutfit | null>(null);
   const [activeShopSuggestion, setActiveShopSuggestion] = useState<WardrobeSuggestion | null>(null);
@@ -2302,9 +2301,20 @@ function AIScreenContent() {
         return;
       }
 
-      const userMessage = retryUserMessage ?? {
+      const saveHistory = latestMessagesRef.current;
+      const retryIndex = retryUserMessage ? saveHistory.findIndex((entry) => entry.id === retryUserMessage.id) : -1;
+      const saveDecision = uploadedAttachments.length ? null : resolveOutfitSave(
+        prompt,
+        retryIndex < 0 ? saveHistory : saveHistory.slice(0, retryIndex),
+        lastCarouselSelection.current,
+        retryUserMessage?.outfitSave,
+      );
+      const userMessage: AIMessage = retryUserMessage ?? {
         ...createUserMessageWithAttachments(visiblePrompt, uploadedAttachments),
         ...(requiredItemIds.length ? { requiredItemIds } : {}),
+        ...(saveDecision?.kind === "save" ? {
+          outfitSave: { kind: "target" as const, messageId: saveDecision.source.id, outfitId: saveDecision.outfit.outfitId },
+        } : {}),
       };
       logAuraChatState("message_created", {
         messageId: userMessage.id,
@@ -2492,13 +2502,16 @@ function AIScreenContent() {
           await saveAuraChatSessionMeta(uid, chat.chatId);
         }
 
-        void updateAuraSessionContextFromPrompt(uid, chatId, prompt);
-        if (isRetry && removeMessageIds.size > 0) {
+        void updateAuraSessionContextFromPrompt(uid, chatId, prompt).catch(() => {
+          logAuraChatState("session_context_update_failed", { chatId });
+        });
+        if (isRetry && activeChatId && removeMessageIds.size > 0) {
           await deleteMessagesFromChat(uid, chatId, Array.from(removeMessageIds));
         }
-        if (!isRetry) {
-          await appendMessageToChat(uid, chatId, userMessage, { titleFromUserText: chatSeedText });
-        }
+        await appendMessageToChat(uid, chatId, userMessage, {
+          titleFromUserText: chatSeedText,
+          skipIfExists: isRetry,
+        });
 
         let immediateStructuredIntroText = "";
         let immediateStructuredIntroShown = false;
@@ -2532,12 +2545,12 @@ function AIScreenContent() {
         const actionChatId = chatId;
         const latestAgentResponseForAction =
           latestAuraAgentResponse(historyMessagesBeforeRequest) ?? lastAgentResponse;
-        const referencedOutfit = resolveReferencedOutfit(
+        const referencedOutfit = saveDecision?.kind === "save" ? saveDecision.outfit : resolveReferencedOutfit(
           prompt,
           latestAgentResponseForAction,
           selectedAgentOutfit ?? lastAgentOutfitForIntent,
         );
-        const referencedAgentMessage = findAgentMessageForOutfit(
+        const referencedAgentMessage = saveDecision?.kind === "save" ? saveDecision.source : findAgentMessageForOutfit(
           historyMessagesBeforeRequest,
           referencedOutfit?.outfitId,
         );
@@ -2555,7 +2568,7 @@ function AIScreenContent() {
           );
           await appendMessageToChat(uid, actionChatId, updatedSource);
         };
-        const appendActionConfirmation = async (text: string) => {
+        const appendActionConfirmation = async (text: string, askForSaveChoice = false) => {
           const assistantMessage = createAuraTextAssistantMessage(text, {
             id: streamingMessageId,
             createdAt: streamingMessageCreatedAt,
@@ -2563,6 +2576,7 @@ function AIScreenContent() {
             localSequence: streamingMessageLocalSequence,
             replyToMessageId: userMessage.id,
           });
+          if (askForSaveChoice) assistantMessage.outfitSave = { kind: "choose" };
           setMessages((prev) => orderChatMessages([...prev, assistantMessage]));
           setQuickChips(DEFAULT_CHIPS);
           await appendMessageToChat(uid, actionChatId, assistantMessage);
@@ -2571,6 +2585,32 @@ function AIScreenContent() {
           });
           await refreshRecentThreads();
         };
+        if (saveDecision) {
+          if (saveDecision.kind !== "save") {
+            await appendActionConfirmation(saveDecision.text, saveDecision.kind === "choose");
+            return;
+          }
+          const result = await saveAuraAgentOutfitClient({
+            outfit: saveDecision.outfit,
+            query: prompt,
+            agentRunId: auraAgentResponseRunId(saveDecision.source.agentResponse),
+            sourceMessageId: saveDecision.source.id,
+          });
+          // The save is committed. Sync the source card before the reply so the thread preview stays current.
+          const chatSyncFailed = () => logAuraChatState("saved_outfit_chat_sync_failed", { messageId: userMessage.id });
+          await patchReferencedAgentState({
+            saved: true,
+            savedOutfitId: result.savedOutfitId,
+            updatedAt: Date.now(),
+          }).catch(chatSyncFailed);
+          await appendActionConfirmation(
+            result.alreadySaved ? "That outfit was already saved." : "Saved that outfit.",
+          ).catch(chatSyncFailed);
+          Toast.success(result.alreadySaved ? "Already saved" : "Saved", result.message);
+          void runHaptic("success");
+          return;
+        }
+
         const dateInstruction = parseOutfitDateInstruction(prompt, new Date(), localTimezone());
         const actionOutfit = uploadedAttachments.length === 0 ? referencedOutfit : null;
         if (actionOutfit && dateInstruction.intent !== "unknown") {
@@ -2639,24 +2679,6 @@ function AIScreenContent() {
           });
           await appendActionConfirmation(result.message || "Got it - I'll avoid this vibe.");
           Toast.success("Noted", "Got it - I'll avoid this vibe.");
-          void runHaptic("success");
-          return;
-        }
-
-        if (actionOutfit && isSaveOutfitPrompt(prompt)) {
-          const result = await saveAuraAgentOutfitClient({
-            outfit: actionOutfit,
-            query: prompt,
-            agentRunId: auraAgentResponseRunId(latestAgentResponseForAction),
-            sourceMessageId: referencedAgentMessage?.id ?? userMessage.id,
-          });
-          await patchReferencedAgentState({
-            saved: true,
-            savedOutfitId: result.savedOutfitId,
-            updatedAt: Date.now(),
-          });
-          await appendActionConfirmation(result.alreadySaved ? "That outfit was already saved." : "Saved that outfit.");
-          Toast.success(result.alreadySaved ? "Already saved" : "Saved", result.message);
           void runHaptic("success");
           return;
         }
@@ -2881,11 +2903,8 @@ function AIScreenContent() {
                 : DEFAULT_CHIPS,
             );
             void runHaptic(AURA_REPLY_FINISH_HAPTIC);
-            await appendMessageToChat(uid, chatId, assistantMessage);
-            await updateChatThread(uid, chatId, {
-              title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
-            });
-            await refreshRecentThreads();
+            await saveDisplayedChatReply(uid, chatId, assistantMessage, refreshRecentThreads,
+              deriveAssistantChatTitle(chatSeedText, assistantMessage));
             return;
           } catch (agentError) {
             const normalized = normalizeAuraAgentError(agentError);
@@ -2924,11 +2943,8 @@ function AIScreenContent() {
             rememberAgentResponse(null);
             setMessages(orderChatMessages([...nextLocalMessages, failureMessage]));
             setQuickChips(DEFAULT_CHIPS);
-            await appendMessageToChat(uid, chatId, failureMessage);
-            await updateChatThread(uid, chatId, {
-              title: deriveAssistantChatTitle(chatSeedText, failureMessage),
-            });
-            await refreshRecentThreads();
+            await saveDisplayedChatReply(uid, chatId, failureMessage, refreshRecentThreads,
+              deriveAssistantChatTitle(chatSeedText, failureMessage));
             Toast.error("AURA couldn't style that", fallbackText);
             return;
           }
@@ -3472,7 +3488,9 @@ function AIScreenContent() {
             ...analyticsErrorProperties(error),
           },
         });
-        const fallback = userFacingAuraError(error);
+        const fallback = saveDecision?.kind === "save" && error instanceof Error && "callableName" in error &&
+          error.callableName === "saveAuraAgentOutfit"
+          ? error.message : userFacingAuraError(error);
         const partialText = streamedTextSoFar.trim();
         const partialAssistantMessage: AIMessage | null = partialText
           ? {
@@ -3502,10 +3520,9 @@ function AIScreenContent() {
         });
         if (chatId) {
           if (partialAssistantMessage) {
-            await appendMessageToChat(uid, chatId, partialAssistantMessage);
+            await saveDisplayedChatReply(uid, chatId, partialAssistantMessage, refreshRecentThreads);
           }
-          await appendMessageToChat(uid, chatId, failureMessage);
-          await refreshRecentThreads();
+          await saveDisplayedChatReply(uid, chatId, failureMessage, refreshRecentThreads);
         }
         Toast.error("AURA couldn't finish", fallback);
       } finally {
@@ -3674,6 +3691,7 @@ function AIScreenContent() {
 
   const handleAuraAgentOutfitSelect = React.useCallback(
     (outfit: AuraAgentOutfit, sourceMessage: AIMessage) => {
+      lastCarouselSelection.current = { messageId: sourceMessage.id, outfitId: outfit.outfitId };
       setSelectedAgentOutfit(outfit);
       setLastAgentOutfit(outfit);
       if (sourceMessage.agentResponse) setLastAgentResponse(sourceMessage.agentResponse);
@@ -3933,11 +3951,8 @@ function AIScreenContent() {
           },
         });
         void runHaptic(AURA_REPLY_FINISH_HAPTIC);
-        await appendMessageToChat(uid, chatIdForAction, assistantMessage);
-        await updateChatThread(uid, chatIdForAction, {
-          title: deriveAssistantChatTitle(sourceMessage.text ?? sourceResponse?.message ?? "AURA styling", assistantMessage),
-        });
-        await refreshRecentThreads();
+        await saveDisplayedChatReply(uid, chatIdForAction, assistantMessage, refreshRecentThreads,
+          deriveAssistantChatTitle(sourceMessage.text ?? sourceResponse?.message ?? "AURA styling", assistantMessage));
       } catch (error) {
         const normalized = normalizeAuraAgentError(error);
         const fallbackText = buildAuraAgentFallbackMessage(normalized);
@@ -3990,8 +4005,7 @@ function AIScreenContent() {
           return orderChatMessages([...prev, failureMessage]);
         });
         if (chatIdForAction) {
-          await appendMessageToChat(uid, chatIdForAction, failureMessage);
-          await refreshRecentThreads();
+          await saveDisplayedChatReply(uid, chatIdForAction, failureMessage, refreshRecentThreads);
         }
         Toast.error("AURA couldn't finish", fallbackText);
       } finally {

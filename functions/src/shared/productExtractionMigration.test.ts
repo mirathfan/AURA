@@ -3,6 +3,7 @@ import {
   extractAmazonLinkData,
   extractProductMetadataFromHtml,
   looksLikeBlockedProductPage,
+  isProductRedirectToStorefront,
   parseZaraProductDetailsResponse,
   productPageHttpError,
   validateProductUrl,
@@ -35,6 +36,43 @@ function failedFixtureNames(result: { results: { name: string; passed: boolean }
 }
 
 describe("backend-owned product extraction migration", () => {
+  test("Puma selected swatch wins over the first ProductGroup variant", () => {
+    // Reduced from the live 689340?swatch=02 page: white is selected, black is first.
+    const page = "https://us.puma.com/us/en/pd/ess-no--1-logo-tee-us-men/689340?swatch=02";
+    const white = {
+      "@type": "Product", name: "PUMA Essentials Men's Tee", color: "PUMA White",
+      brand: { name: "PUMA" }, image: "https://images.puma.com/global/689340/02/mod01.png",
+      offers: { url: page, price: 11.99, priceCurrency: "USD" },
+    };
+    const black = {
+      ...white, color: "PUMA Black", image: "https://images.puma.com/global/689340/01/mod01.png",
+      offers: { ...white.offers, url: page.replace("swatch=02", "swatch=01") },
+    };
+    const group = { "@type": "ProductGroup", name: white.name, hasVariant: [black, white] };
+    for (const nodes of [[white, group], [group, white]]) {
+      const html = `<script type="application/ld+json">${JSON.stringify(nodes)}</script>`;
+      const result = extractStructuredData(html, page);
+      expect(result.primaryImage).toBe(white.image);
+      expect(result.color).toBe("PUMA White");
+      expect(result.priceAmount).toBe(11.99);
+    }
+  });
+  test("storefront redirects cannot supply promotional images as product images", () => {
+    const product = new URL("https://www.colorfulstandard.com/products/organic-straight-leg-pants-deep-black-male");
+    expect(isProductRedirectToStorefront(product, new URL("https://colorfulstandard.com/en-us"))).toBe(true);
+    expect(isProductRedirectToStorefront(product, new URL("https://colorfulstandard.com/"))).toBe(true);
+    expect(isProductRedirectToStorefront(product, new URL("https://colorfulstandard.com/en-us/products/organic-straight-leg-pants-deep-black-male"))).toBe(false);
+    expect(isProductRedirectToStorefront(new URL("https://example.com/"), new URL("https://example.com/en-us"))).toBe(false);
+  });
+
+  test("child retailer domains take precedence and lookalike hosts stay generic", () => {
+    expect(normalizeProductUrl("https://oldnavy.gap.com/browse/product.do?pid=6735870120210").retailer).toBe("Old Navy");
+    expect(normalizeProductUrl("https://bananarepublic.gap.com/browse/product.do?pid=11894600120000").retailer).toBe("Banana Republic");
+    expect(normalizeProductUrl("https://www.gap.com/browse/product.do?pid=7962558320001").retailer).toBe("Gap");
+    expect(normalizeProductUrl("https://gap.com.example.org/products/shirt").retailer).toBeNull();
+    expect(normalizeProductUrl("https://notgap.com/products/shirt").retailer).toBeNull();
+    expect(normalizeProductUrl("https://us.puma.com/us/en/pd/tee/689340").retailer).toBe("Puma");
+  });
   test("retailer and generic extraction fixtures remain green", () => {
     const result = runProductExtractionPipelineFixture();
     expect(failedFixtureNames(result)).toEqual([]);

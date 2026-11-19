@@ -129,6 +129,9 @@ const IMPORTANT_VARIANT_PARAMS = new Set([
   "th",
   "psc",
   "variant",
+  "swatch",
+  "ccode",
+  "colordisplaycode",
   "variation",
   "color",
   "colour",
@@ -168,6 +171,31 @@ const RETAILERS: Array<{ id: string; label: string; domains: string[] }> = [
   { id: "amazon", label: "Amazon", domains: AMAZON_DOMAINS },
   { id: "adidas", label: "Adidas", domains: ["adidas.com"] },
   { id: "uniqlo", label: "Uniqlo", domains: ["uniqlo.com"] },
+  // These retailers use the shared structured-data/metadata extractor.
+  // Registration identifies the store; it does not imply a verified import.
+  { id: "gap", label: "Gap", domains: ["gap.com"] },
+  { id: "oldnavy", label: "Old Navy", domains: ["oldnavy.gap.com", "oldnavy.com"] },
+  { id: "bananarepublic", label: "Banana Republic", domains: ["bananarepublic.gap.com", "bananarepublic.com"] },
+  { id: "puma", label: "Puma", domains: ["puma.com"] },
+  { id: "cos", label: "COS", domains: ["cos.com"] },
+  { id: "madewell", label: "Madewell", domains: ["madewell.com"] },
+  { id: "everlane", label: "Everlane", domains: ["everlane.com"] },
+  { id: "taylorstitch", label: "Taylor Stitch", domains: ["taylorstitch.com"] },
+  { id: "marinelayer", label: "Marine Layer", domains: ["marinelayer.com"] },
+  { id: "kotn", label: "Kotn", domains: ["kotn.com"] },
+  { id: "colorfulstandard", label: "Colorful Standard", domains: ["colorfulstandard.com"] },
+  { id: "alo", label: "Alo Yoga", domains: ["aloyoga.com"] },
+  { id: "tentree", label: "tentree", domains: ["tentree.com"] },
+  { id: "alexmill", label: "Alex Mill", domains: ["alexmill.com"] },
+  { id: "outerknown", label: "Outerknown", domains: ["outerknown.com"] },
+  { id: "ayr", label: "AYR", domains: ["ayr.com"] },
+  { id: "goodamerican", label: "Good American", domains: ["goodamerican.com"] },
+  { id: "reigningchamp", label: "Reigning Champ", domains: ["reigningchamp.com"] },
+  { id: "rails", label: "Rails", domains: ["rails.com"] },
+  { id: "draperjames", label: "Draper James", domains: ["draperjames.com"] },
+  { id: "faherty", label: "Faherty", domains: ["fahertybrand.com"] },
+  { id: "showmeyourmumu", label: "Show Me Your Mumu", domains: ["showmeyourmumu.com"] },
+  { id: "universalstandard", label: "Universal Standard", domains: ["universalstandard.com"] },
 ];
 
 type JsonObject = Record<string, unknown>;
@@ -218,7 +246,12 @@ function hostMatches(host: string, domains: string[]) {
 }
 
 function retailerForHost(host: string) {
-  return RETAILERS.find((retailer) => hostMatches(host, retailer.domains)) ?? null;
+  // A child store such as oldnavy.gap.com must win over its parent gap.com.
+  return RETAILERS
+    .flatMap((retailer) => retailer.domains
+      .filter((domain) => hostMatches(host, [domain]))
+      .map((domain) => ({ retailer, specificity: domain.length })))
+    .sort((a, b) => b.specificity - a.specificity)[0]?.retailer ?? null;
 }
 
 export function amazonAsinFromProductUrl(url: URL): string | null {
@@ -534,6 +567,7 @@ function resultFromProductNode(product: JsonObject, pageUrl: URL, nodes: JsonObj
     title: cleanText(valueByKeys(product, ["name", "headline", "title"]), 220),
     titleSource: "json_ld_product_name",
     brand: brandFromNode(product),
+    color: cleanText(product.color, 120),
     category: cleanText(product.category ?? breadcrumbs[breadcrumbs.length - 2] ?? breadcrumbs[breadcrumbs.length - 1], 120),
     subcategory: cleanText(breadcrumbs[breadcrumbs.length - 1], 120),
     description: cleanText(product.description, 900),
@@ -566,7 +600,29 @@ export function extractStructuredData(html: string, pageUrl: string | URL): Prod
   const url = new URL(pageUrl.toString());
   const { values, warnings } = parseJsonLdBlocks(html);
   const nodes = values.flatMap(flattenJsonLd);
+  const selectedProduct = nodes.find((node) => {
+    if (!jsonTypeIncludes(node["@type"], "Product")) return false;
+    const candidates = [node.url, ...asArray(node.offers).map((offer) => asObject(offer)?.url)];
+    return candidates.some((candidate) => {
+      if (typeof candidate !== "string") return false;
+      try {
+        const productUrl = new URL(candidate, url);
+        if (normalizedHost(productUrl.hostname) !== normalizedHost(url.hostname)) return false;
+        const path = (value: URL) => value.pathname.replace(/\/$/, "");
+        const variantParams = Array.from(url.searchParams.entries())
+          .filter(([key]) => IMPORTANT_VARIANT_PARAMS.has(key.toLowerCase()));
+        // Retailers may change the descriptive slug in their offer URL, but
+        // the product ID and every requested variant must still agree.
+        const sameProduct = path(productUrl) === path(url) ||
+          (variantParams.length > 0 && path(productUrl).split("/").pop() === path(url).split("/").pop());
+        return sameProduct && variantParams.every(([key, value]) => productUrl.searchParams.get(key) === value);
+      } catch {
+        return false;
+      }
+    });
+  });
   const product =
+    selectedProduct ??
     nodes.find((node) => jsonTypeIncludes(node["@type"], "ProductGroup")) ??
     nodes.find((node) => jsonTypeIncludes(node["@type"], "Product"));
   if (!product) {

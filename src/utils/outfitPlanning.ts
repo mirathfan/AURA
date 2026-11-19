@@ -162,6 +162,9 @@ function rotationReason(selected: ClothingItem[]) {
 }
 
 export function weatherSuggestion(tempC?: number, weatherLabel?: string) {
+  if (!Number.isFinite(tempC) && !norm(weatherLabel)) {
+    return "Check the forecast before choosing your layers.";
+  }
   if (isCold(tempC)) return "Cold today — consider a jacket.";
   if (isWet(weatherLabel)) return "Wet weather — consider water-resistant outerwear.";
   if (norm(weatherLabel).includes("wind")) return "Windy — layer up.";

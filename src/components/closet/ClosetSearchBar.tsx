@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { TextInput, View } from "react-native";
+import { Pressable, TextInput, View } from "react-native";
 
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
@@ -31,6 +31,10 @@ export function ClosetSearchBar({
     >
       <Ionicons name="search-outline" size={17} color="rgba(251,228,216,0.58)" />
       <TextInput
+        accessibilityLabel="Search closet"
+        autoCapitalize="none"
+        autoCorrect={false}
+        returnKeyType="search"
         value={value}
         onChangeText={onChangeText}
         placeholder="Search by item, brand, category, color"
@@ -45,6 +49,12 @@ export function ClosetSearchBar({
           includeFontPadding: false,
         }}
       />
+      {!!value && (
+        <Pressable accessibilityRole="button" accessibilityLabel="Clear closet search"
+          onPress={() => onChangeText("")} hitSlop={8} style={{ padding: 4 }}>
+          <Ionicons name="close-circle" size={20} color={colors.text} />
+        </Pressable>
+      )}
     </View>
   );
 }

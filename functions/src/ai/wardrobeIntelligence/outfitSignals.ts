@@ -4,6 +4,12 @@
 
 import { resolveOutfitTargetDay, type OutfitTargetDay } from "../../../../shared/outfitTargetDay";
 
+// "Make it work for a walk" uses work as a verb, unlike "wear it to work".
+export function isWorkOccasion(text: string): boolean {
+  return /\b(office|interview|business|professional|meeting|corporate|workwear|workplace)\b/i.test(text) ||
+    /\b(at|to|for|after|before|from) work\b|\bwork (?:outfit|look|clothes|wear|meeting|event|day|tomorrow|today)\b|^work$/i.test(text.trim());
+}
+
 export type OutfitWeatherBand = "freezing" | "cold" | "cool" | "mild" | "warm" | "hot";
 
 export type OutfitWeatherContext = {

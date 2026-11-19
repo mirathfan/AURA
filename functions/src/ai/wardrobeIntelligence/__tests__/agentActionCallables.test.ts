@@ -52,19 +52,17 @@ function outfitPayload() {
 
 describe("agent action callables", () => {
   it("restores a removed outfit instead of reporting an invisible duplicate", async () => {
-    const setSavedOutfit = jest.fn(async () => undefined);
+    const persistSavedOutfit = jest.fn(async () => false);
     const result = await handleSaveAuraAgentOutfit("uid", { outfit: outfitPayload() }, {
-      getSavedOutfit: async () => ({ active: false, deletedAt: 123 }),
-      setSavedOutfit,
-      setOutfitEvent: async () => undefined,
+      persistSavedOutfit,
       recordFeedback: async () => undefined,
     });
     expect(result).toMatchObject({ saved: true, alreadySaved: false });
-    expect(setSavedOutfit).toHaveBeenCalledWith("uid", result.savedOutfitId, expect.objectContaining({
+    expect(persistSavedOutfit).toHaveBeenCalledWith("uid", result.savedOutfitId, expect.objectContaining({
       active: true,
       deletedAt: expect.anything(),
       savedAtMs: expect.any(Number),
-    }));
+    }), expect.stringMatching(/^saved_/), expect.objectContaining({ type: "saved" }));
   });
   it("requires auth for save actions", async () => {
     await expect(handleSaveAuraAgentOutfit(undefined, {
@@ -83,12 +81,10 @@ describe("agent action callables", () => {
       agentRunId: "run-1",
     }, {
       now: () => new Date("2026-06-01T12:00:00.000Z"),
-      getSavedOutfit: async () => null,
-      setSavedOutfit: async (_uid, _id, payload) => {
+      persistSavedOutfit: async (_uid, _id, payload, _eventId, event) => {
         savedWrites.push(payload);
-      },
-      setOutfitEvent: async (_uid, _id, payload) => {
-        outfitEventWrites.push(payload);
+        outfitEventWrites.push(event);
+        return false;
       },
       recordFeedback: async (_uid, input) => {
         feedbackWrites.push(input);
@@ -118,10 +114,7 @@ describe("agent action callables", () => {
     const result = await handleSaveAuraAgentOutfit("uid", {
       outfit: outfitPayload(),
     }, {
-      getSavedOutfit: async () => ({ id: "existing" }),
-      setSavedOutfit: async () => {
-        throw new Error("should not write duplicate");
-      },
+      persistSavedOutfit: async () => true,
       recordFeedback: async () => {
         throw new Error("should not record duplicate feedback");
       },
@@ -131,6 +124,34 @@ describe("agent action callables", () => {
       saved: true,
       alreadySaved: true,
     });
+  });
+
+  it("rejects a failed commit and resolves a retried save with exactly one outfit", async () => {
+    const saved = new Map<string, Record<string, unknown>>();
+    const persist = jest.fn(async (_uid: string, id: string, payload: Record<string, unknown>) => {
+      if (saved.has(id)) return true;
+      saved.set(id, payload);
+      return false;
+    }).mockRejectedValueOnce(new Error("write rejected"));
+    const feedback = jest.fn(async () => undefined);
+    const save = () => handleSaveAuraAgentOutfit("uid", { outfit: outfitPayload() }, {
+      persistSavedOutfit: persist, recordFeedback: feedback,
+    });
+    await expect(save()).rejects.toThrow("write rejected");
+    expect(saved.size).toBe(0);
+    expect(feedback).not.toHaveBeenCalled();
+    const result = await save();
+    expect(result).toMatchObject({ saved: true, alreadySaved: false });
+    await expect(save()).resolves.toMatchObject({ savedOutfitId: result.savedOutfitId, alreadySaved: true });
+    expect([...saved.values()].map((row) => row.itemIds)).toEqual([["shirt-1", "pants-1", "shoe-1"]]);
+    expect(feedback).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns the committed save when optional feedback is unavailable", async () => {
+    await expect(handleSaveAuraAgentOutfit("uid", { outfit: outfitPayload() }, {
+      persistSavedOutfit: async () => false,
+      recordFeedback: async () => { throw new Error("unavailable"); },
+    })).resolves.toMatchObject({ saved: true, alreadySaved: false });
   });
 
   it("logs a wear event, updates closet item wear metadata, and records wear memory", async () => {
@@ -313,10 +334,10 @@ describe("agent action callables", () => {
 it("still saves an outfit when server consent is revoked, without embedding feedback", async () => {
   const guard = jest.spyOn(consent, "assertAiConsent").mockRejectedValue(consent.consentRequired());
   const feedback = jest.spyOn(styleMemory, "recordStyleMemoryFeedback");
-  const save = jest.fn(async () => undefined);
+  const save = jest.fn(async () => false);
   try {
     await expect(handleSaveAuraAgentOutfit("uid", { outfit: outfitPayload() }, {
-      getSavedOutfit: async () => null, setSavedOutfit: save, setOutfitEvent: async () => undefined,
+      persistSavedOutfit: save,
     })).resolves.toMatchObject({ saved: true });
     expect(save).toHaveBeenCalledTimes(1);
     expect(feedback).not.toHaveBeenCalled();

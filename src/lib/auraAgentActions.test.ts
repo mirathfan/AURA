@@ -1,3 +1,4 @@
+import { classifyAuraChatIntent } from "@/src/lib/auraChatHelpers";
 import {
   auraAgentActionStateKey,
   buildAuraAgentActionRequest,
@@ -5,8 +6,11 @@ import {
   decorateAuraAgentActionForState,
   extractRequestedOutfitCount,
   shouldRouteToAuraStylingAgent,
+  resolveReferencedOutfit,
 } from "@/src/lib/auraAgentActions";
-import type { AuraAgentOutfit, AuraAgentSuggestedAction } from "@/src/types/auraAgent";
+import type { AuraAgentOutfit, AuraAgentResponse, AuraAgentSuggestedAction } from "@/src/types/auraAgent";
+
+jest.mock("@/src/lib/aiChats", () => ({ summarizeChatTitle: jest.fn() }));
 
 const outfit: AuraAgentOutfit = {
   outfitId: "outfit-1",
@@ -41,6 +45,31 @@ const outfit: AuraAgentOutfit = {
 };
 
 describe("aura agent action helpers", () => {
+  it.each([
+    "I like the second one. Keep the pants, swap the shoes, and make it work for a cold walk.",
+    "For option two replace the footwear but retain the trousers for a chilly stroll.",
+  ])("sends the second card's exact IDs even when option one is selected: %s", (prompt) => {
+    const card = (index: number): AuraAgentOutfit => ({
+      ...outfit, outfitId: `outfit-${index}`, occasion: "dinner date",
+      items: [
+        {...outfit.items[0], role: "bottom", itemId: `Twin_Pants-${index}`, name: "Black pleated trousers"},
+        {...outfit.items[1], itemId: `Shoes-${index}`},
+      ],
+    });
+    const first = card(1);
+    const response = { outfits: [first, card(2)] } as AuraAgentResponse;
+    const chatIntent = classifyAuraChatIntent(prompt, { hasPreviousLook: true });
+    expect(shouldRouteToAuraStylingAgent({enabled: true, prompt, attachmentCount: 0, chatIntent, hasPreviousOutfit: true})).toBe(true);
+    const request = buildAuraAgentInitialRequest({
+      prompt, chatIntent, previousAgentOutfit: resolveReferencedOutfit(prompt, response, first),
+    });
+    expect(request.mode).toBe("refine_outfit");
+    expect(request.previousOutfit).toMatchObject({
+      occasion: "dinner date",
+      items: [{itemId: "Twin_Pants-2", role: "bottom"}, {itemId: "Shoes-2", role: "footwear"}],
+    });
+  });
+
   it("extracts requested outfit counts from natural language prompts", () => {
     expect(extractRequestedOutfitCount("give me 3 outfits for office")).toBe(3);
     expect(extractRequestedOutfitCount("Give me 3 outfits for a date")).toBe(3);

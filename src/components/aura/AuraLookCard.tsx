@@ -679,6 +679,8 @@ function BoardImage({
   thumbnailScale?: boolean;
 }) {
   const source = getImageSourceForBoardItem(item);
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const showImage = !!source && source.uri !== failedUri;
   const opacity = useSharedValue(reduceMotion ? 1 : 0);
   const translateY = useSharedValue(reduceMotion ? 0 : 20);
   const imageSizingStyle = getBoardImageSizingStyle(
@@ -719,7 +721,7 @@ function BoardImage({
     transform: [{ translateY: translateY.value }],
   }));
 
-  if (!item || !source) return null;
+  if (!item) return null;
 
   return (
     <Animated.View
@@ -771,7 +773,7 @@ function BoardImage({
         ]}
         onPress={() => onPress(item)}
       >
-        <View
+        {showImage ? <View
           pointerEvents="none"
           style={[
             styles.photoShadow,
@@ -788,9 +790,9 @@ function BoardImage({
                     : 0.055 * shadowIntensity,
             },
           ]}
-        />
+        /> : null}
         <View pointerEvents="none" style={styles.imageFrame}>
-          <AppImage
+          {showImage && source ? <AppImage
             source={{
               uri: source.uri,
             }}
@@ -816,8 +818,19 @@ function BoardImage({
                 imageStyle: imageSizingStyle,
               });
             }}
-            onError={() => logResolvedItemImageLoadFailure(source.resolved)}
-          />
+            onError={() => {
+              logResolvedItemImageLoadFailure(source.resolved);
+              setFailedUri(source.uri);
+            }}
+          /> : (
+            <View style={styles.missingPhoto}>
+              <Ionicons name="image-outline" size={20} color={auraColors.textOnLightSecondary} />
+              <Text numberOfLines={3} style={styles.missingPhotoName}>
+                {item.itemName || titleCase(item.role)}
+              </Text>
+              {!thumbnailScale ? <Text style={styles.missingPhotoHint}>Photo unavailable</Text> : null}
+            </View>
+          )}
         </View>
       </TouchableOpacity>
     </Animated.View>
@@ -1546,6 +1559,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     fontWeight: "500",
+    textAlign: "center",
+  },
+  missingPhoto: {
+    maxWidth: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 8,
+    gap: 4,
+    borderRadius: 12,
+    backgroundColor: "rgba(25,0,25,0.05)",
+  },
+  missingPhotoName: {
+    color: auraColors.textOnLight,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  missingPhotoHint: {
+    color: auraColors.textOnLightSecondary,
+    fontSize: 10,
+    lineHeight: 14,
     textAlign: "center",
   },
   animatedPiece: {

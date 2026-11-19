@@ -35,6 +35,7 @@ import { useNow } from "@/src/hooks/useNow";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { useSelectedDate } from "@/src/hooks/useSelectedDate";
 import { addDays, formatHeaderDate, parseDateValue, toDayKey } from "@/src/utils/date";
+import { dayEventSummary } from "@/src/utils/dayEventSummary";
 import {
   DailyOutfitRecord,
   OutfitItemsByCategory,
@@ -588,12 +589,10 @@ export default function CalendarScreen() {
     return `High ${high}° • Low ${low}° • ${weather.weather.conditionLabel ?? "Weather"}${now}`;
   }, [weather.permission, weather.state, weather.weather]);
 
-  const contextEventSummary = useMemo(() => {
-    if (events.events.length === 0) return "No events for this day";
-    const next = events.events[0];
-    if (!next) return "No events for this day";
-    return `Next: ${next.timeLabel} — ${next.title}`;
-  }, [events.events]);
+  const contextEventSummary = useMemo(
+    () => dayEventSummary(events.permission, events.state, events.events),
+    [events.events, events.permission, events.state],
+  );
 
   const timelineVibe = useMemo(() => inferTimelineVibe(events.events), [events.events]);
   const daySuggestion = useMemo(

@@ -1,3 +1,4 @@
+import { warmLayerItemIds } from "./outfitValidation";
 import type {
   NormalizedOutfitGenerationInput,
   OutfitCandidate,
@@ -75,6 +76,7 @@ export function buildOutfitGenerationDeveloperPrompt(): string {
     "Return JSON only. No markdown. No prose outside JSON.",
     "Only use itemIds from the provided candidates.",
     "If hardConstraints.requiredItemIds is non-empty, every returned outfit must include every exact required itemId unless no valid outfit is possible.",
+    "For a cold outdoor request, include one of hardConstraints.warmLayerItemIds when supplied. Preserve the specified occasion when editing a look.",
     "Never use hardConstraints.avoidItemIds or items matching hardConstraints.avoidTerms.",
     "You must use each item only with its allowedRole. If an item has allowedRole top, use role top. If allowedRole footwear, use role footwear.",
     "Each outfit must be wearable and internally coherent.",
@@ -107,6 +109,7 @@ export function buildOutfitGenerationUserPrompt(
     accessory: context.candidates.accessory.map(candidateForPrompt),
     one_piece: context.candidates.one_piece.map(candidateForPrompt),
   };
+  const warmLayers = warmLayerItemIds(input, context);
   return JSON.stringify({
     task: "Generate closet-only outfit recommendations.",
     requestedOutfitCount: input.count,
@@ -134,6 +137,7 @@ export function buildOutfitGenerationUserPrompt(
       : null,
     hardConstraints: {
       requiredItemIds: input.requiredItemIds,
+      ...(warmLayers ? { warmLayerItemIds: warmLayers } : {}),
       avoidItemIds: input.avoidItemIds,
       avoidTerms: input.avoidTerms,
     },

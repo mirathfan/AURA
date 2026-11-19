@@ -175,9 +175,14 @@ export function draftAuditReason(item: ClosetItemDocument): string | null {
 }
 
 export function isReadyClosetItem(item: ClosetItemDocument): boolean {
-  if (item.isDraft === true) return false;
+  if (item.deletedAt != null || item.isDraft === true) return false;
   if (normalizedLower(item.itemLifecycleStatus) !== "ready") return false;
-  if (normalizedLower(item.draftState) !== "ready") return false;
+  // Earlier versions saved completed outfit extractions with a null draftState.
+  const extraction = item.outfitExtraction as Record<string, unknown> | undefined;
+  const legacyExtraction = item.draftState === null && item.isDraft === false &&
+    typeof extraction?.traceId === "string" && extraction.traceId.trim().length > 0 &&
+    typeof extraction.tempId === "string" && extraction.tempId.trim().length > 0;
+  if (normalizedLower(item.draftState) !== "ready" && !legacyExtraction) return false;
   if (!["AVAILABLE", "WORN", "IN_LAUNDRY"].includes(cleanString(item.status).toUpperCase())) {
     return false;
   }

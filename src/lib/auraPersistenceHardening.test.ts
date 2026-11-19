@@ -22,7 +22,10 @@ jest.mock("firebase/firestore", () => ({
   writeBatch: jest.fn(),
 }));
 
-import { sanitizeAgentResponseForStorage } from "@/src/lib/aiChats";
+jest.mock("@/src/lib/mediaFirestore", () => jest.requireMock("firebase/firestore"));
+
+import { doc, getDoc, increment, writeBatch } from "firebase/firestore";
+import { appendMessageToChat, sanitizeAgentResponseForStorage } from "@/src/lib/aiChats";
 
 describe("AURA chat persistence hardening", () => {
   it("removes private fields from persisted agent responses", () => {
@@ -65,4 +68,23 @@ describe("AURA chat persistence hardening", () => {
       ],
     });
   });
+});
+
+
+it("restores a missing user prompt on retry and keeps an already saved prompt untouched", async () => {
+  const input = { id: "original-prompt", type: "user" as const, text: "Style me today", createdAt: 1 };
+  const batch = { set: jest.fn(), commit: jest.fn().mockResolvedValue(undefined) };
+  jest.mocked(writeBatch).mockReturnValue(batch as unknown as ReturnType<typeof writeBatch>);
+  const opts = { skipIfExists: true, titleFromUserText: input.text };
+  for (const alreadySaved of [false, true]) {
+    jest.mocked(getDoc)
+      .mockResolvedValueOnce({ exists: () => false } as Awaited<ReturnType<typeof getDoc>>)
+      .mockResolvedValueOnce({ exists: () => alreadySaved } as Awaited<ReturnType<typeof getDoc>>);
+    await appendMessageToChat("owner", "chat", input, opts);
+  }
+  expect(doc).toHaveBeenCalledWith(expect.anything(), "users", "owner", "aiChats", "chat");
+  expect(jest.mocked(doc).mock.calls.filter((args) => args.at(-1) === input.id)).toHaveLength(2);
+  expect(increment).toHaveBeenCalledTimes(1);
+  expect(increment).toHaveBeenCalledWith(1);
+  expect(batch.commit).toHaveBeenCalledTimes(1);
 });

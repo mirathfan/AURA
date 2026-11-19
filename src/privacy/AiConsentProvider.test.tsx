@@ -6,12 +6,13 @@ import { AI_CONSENT_VERSION } from "../../shared/aiConsent";
 import { allowAiLocally, saveAiConsent } from "./consentClient";
 
 let mockUser: { uid: string } | null = { uid: "one" };
+const mockErrors: ((error: { code: string }) => void)[] = [];
 const mockCallbacks: ((snapshot: unknown) => void)[] = [];
 jest.mock("../contexts/AuthContext", () => ({ useAuth: () => ({ user: mockUser }) }));
 jest.mock("../lib/firebase", () => ({ db: {}, auth: { get currentUser() { return mockUser; } } }));
 jest.mock("../hooks/useAppTheme", () => ({ useAppTheme: () => ({ colors: {} }) }));
-jest.mock("firebase/firestore", () => ({ doc: jest.fn(), onSnapshot: (_ref: unknown, _options: unknown, callback: (snapshot: unknown) => void) => {
-  mockCallbacks.push(callback); return jest.fn();
+jest.mock("firebase/firestore", () => ({ doc: jest.fn(), onSnapshot: (_ref: unknown, _options: unknown, callback: (snapshot: unknown) => void, error: (error: { code: string }) => void) => {
+  mockErrors.push(error); mockCallbacks.push(callback); return jest.fn();
 } }));
 jest.mock("./consentClient", () => ({
   ...jest.requireActual("./consentClient"), saveAiConsent: jest.fn(),
@@ -78,4 +79,20 @@ it("does not reuse consent during account switching or from a stale listener", (
   emit({ ...accepted, policyVersion: "old" });
   expect(view.getByText("Accept AI sharing")).toBeTruthy();
   expect(view.getByTestId("approved").props.children).toBe("false");
+});
+
+ it("keeps AI disabled on permission failure and recovers through a fresh server listener", () => {
+  const view = render(tree());
+  fireEvent.press(view.getByText("Manage"));
+  act(() => mockErrors[mockErrors.length - 1]({ code: "permission-denied" }));
+  expect(view.getByText(/server denied access/)).toBeTruthy();
+  fireEvent.press(view.getByText("Accept AI sharing"));
+  expect(saveAiConsent).not.toHaveBeenCalled();
+  fireEvent.press(view.getByText("Retry privacy settings"));
+  expect(mockCallbacks).toHaveLength(2);
+  expect(view.getByTestId("approved").props.children).toBe("false");
+  emit(accepted, true);
+  expect(view.getByTestId("approved").props.children).toBe("false");
+  emit(accepted);
+  expect(view.getByTestId("approved").props.children).toBe("true");
 });

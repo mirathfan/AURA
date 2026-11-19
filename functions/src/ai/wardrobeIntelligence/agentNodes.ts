@@ -13,6 +13,8 @@ import {
   retrieveOutfitGenerationContext,
   type RetrieveOutfitContextDeps,
 } from "./outfitContext";
+import { normalizeOutfitRoleAlias } from "./outfitRole";
+import { unavailableRefinementConstraints } from "./outfitValidation";
 import { logger } from "../../shared/logger";
 import { generateValidatedOutfitsWithRetry } from "./outfitGeneration";
 import { safeRecordAuraMetricEvent } from "./metrics";
@@ -89,13 +91,24 @@ function previousOutfitField(state: AuraStylingAgentState, field: string): strin
   return cleanText((previous as Record<string, unknown>)[field]);
 }
 
+function selectedOutfitRef(state: AuraStylingAgentState) {
+  const context = state.request.conversationContext;
+  if (!context?.selectedOutfitId) return undefined;
+  // Generated IDs such as "outfit-2" can repeat in another assistant turn.
+  const matching = context.priorOutfitRefs.filter((ref) => ref.outfitId === context.selectedOutfitId).reverse();
+  const items = state.request.previousOutfit?.items;
+  if (Array.isArray(items)) {
+    const ids = new Set(items.map((item) => cleanText(item?.itemId)).filter(Boolean));
+    const exact = matching.find((ref) => ref.itemIds.length === ids.size && ref.itemIds.every((id) => ids.has(id)));
+    if (exact) return exact;
+  }
+  return matching[0];
+}
+
 function selectedOutfitContext(state: AuraStylingAgentState): string {
   const context = state.request.conversationContext;
   if (!context) return "";
-  const selectedId = cleanText(context.selectedOutfitId);
-  const selectedRef = selectedId
-    ? context.priorOutfitRefs.find((entry) => entry.outfitId === selectedId)
-    : undefined;
+  const selectedRef = selectedOutfitRef(state);
   const refs = [
     selectedRef ? `Selected outfit: ${[
       selectedRef.index ? `outfit ${selectedRef.index}` : "",
@@ -123,12 +136,7 @@ function selectedOutfitContext(state: AuraStylingAgentState): string {
 }
 
 function selectedOutfitField(state: AuraStylingAgentState, field: "occasion" | "formality" | "vibe"): string {
-  const context = state.request.conversationContext;
-  const selectedId = cleanText(context?.selectedOutfitId);
-  const selectedRef = selectedId
-    ? context?.priorOutfitRefs.find((entry) => entry.outfitId === selectedId)
-    : undefined;
-  return cleanText(selectedRef?.[field]);
+  return cleanText(selectedOutfitRef(state)?.[field]);
 }
 
 function recentTurnContext(state: AuraStylingAgentState): string {
@@ -185,6 +193,13 @@ function agentOutfitQuery(state: AuraStylingAgentState): string {
   const intent = state.intent;
   const requestQuery = cleanText(state.request.query);
   const base = requestQuery || intent?.query || "closet outfit";
+  const previousOccasion = previousOutfitField(state, "occasion") || selectedOutfitField(state, "occasion");
+  const nextOccasion = intent?.constraints.occasion;
+  if (nextOccasion && previousOccasion && nextOccasion.toLowerCase() !== previousOccasion.toLowerCase() &&
+      !/\b(this|that|these|those|it|keep|retain|swap|replace|option|first|second|third)\b/i.test(base)) {
+    // A fresh brief for another occasion should not inherit the previous day's weather or pieces.
+    return base;
+  }
   const context = [
     selectedOutfitContext(state),
     recentTurnContext(state),
@@ -192,7 +207,7 @@ function agentOutfitQuery(state: AuraStylingAgentState): string {
   const contextSuffix = context ? ` Recent chat/card context: ${context}` : "";
   if (intent?.mode !== "refine_outfit") return `${base}.${contextSuffix}`.trim();
   const avoid = intent.constraints.avoidItemIds.length
-    ? ` Avoid these previous item IDs when possible: ${intent.constraints.avoidItemIds.join(", ")}.`
+    ? ` Exclude these item IDs from the edited look: ${intent.constraints.avoidItemIds.join(", ")}.`
     : "";
   return `${base}. Refinement request: ${intent.constraints.refinementInstruction ?? base}.${avoid}${contextSuffix}`;
 }
@@ -313,6 +328,16 @@ export const retrieveOutfitContextNode: AgentNode = async (state, deps) => {
     ...(state.styleMemory ? { styleMemory: outfitStyleMemoryContextFromResponse(state.styleMemory) } : {}),
     ...(userPreferences ? { userPreferences } : {}),
   };
+  if (state.intent?.mode === "refine_outfit") {
+    const previous = state.request.previousOutfit?.items;
+    const replacingFootwear = Array.isArray(previous) && previous.some((item) =>
+      item && normalizeOutfitRoleAlias(item.role ?? item.allowedRole ?? item.category) === "footwear" &&
+      input.avoidItemIds.includes(cleanText(item.itemId)));
+    const missing = unavailableRefinementConstraints(input, contextWithMemory, replacingFootwear);
+    if (missing.length) {
+      throw new HttpsError("failed-precondition", "Requested edit is unavailable.", { unavailableRefinements: missing });
+    }
+  }
   assertMinimumContext(contextWithMemory);
   return {
     ...state,

@@ -1,10 +1,10 @@
-import { userWriteBatch } from "../../shared/accountLifecycle";
-import { setUserDocument } from "../../shared/accountLifecycle";
+import { assertActiveInTransaction, setUserDocument, userWriteBatch } from "../../shared/accountLifecycle";
+import { assertMediaAttachable } from "../../shared/mediaSafety";
 import { assertAiConsent, isAiConsentError, setAiConsentUser } from "../../shared/aiConsent";
 import { createHash } from "node:crypto";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import { setLogContext, tracedHandler } from "../../shared/logger";
+import { logger, setLogContext, tracedHandler } from "../../shared/logger";
 import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../../shared/rateLimit";
 import {
   buildOutfitWeatherWarnings,
@@ -58,8 +58,7 @@ type AgentActionDeps = {
     input: StyleMemoryFeedbackInput,
   ) => Promise<unknown>;
   now?: () => Date;
-  getSavedOutfit?: (uid: string, id: string) => Promise<Record<string, unknown> | null>;
-  setSavedOutfit?: (uid: string, id: string, payload: Record<string, unknown>) => Promise<void>;
+  persistSavedOutfit?: typeof persistSavedOutfit;
   getWearEvent?: (uid: string, id: string) => Promise<Record<string, unknown> | null>;
   setWearEvent?: (uid: string, id: string, payload: Record<string, unknown>) => Promise<void>;
   getOutfitEvent?: (uid: string, id: string) => Promise<Record<string, unknown> | null>;
@@ -296,13 +295,22 @@ function dateKeyForInput(input: AgentActionInput, date: Date) {
   return input.dateKey ?? dateKey(date);
 }
 
-async function defaultGetSavedOutfit(uid: string, id: string) {
-  const snap = await getFirestore().collection("users").doc(uid).collection("savedOutfits").doc(id).get();
-  return snap.exists ? snap.data() ?? null : null;
-}
-
-async function defaultSetSavedOutfit(uid: string, id: string, payload: Record<string, unknown>) {
-  await setUserDocument(getFirestore().collection("users").doc(uid).collection("savedOutfits").doc(id), payload, { merge: true });
+async function persistSavedOutfit(uid: string, id: string, payload: Record<string, unknown>, eventId: string, event: Record<string, unknown>) {
+  const db = getFirestore();
+  const user = db.collection("users").doc(uid);
+  const savedRef = user.collection("savedOutfits").doc(id);
+  const eventRef = user.collection("outfitEvents").doc(eventId);
+  return db.runTransaction(async (transaction) => {
+    await assertActiveInTransaction(transaction, uid);
+    const [saved, previousEvent] = await transaction.getAll(savedRef, eventRef);
+    const alreadySaved = saved.exists && saved.get("active") !== false;
+    if (alreadySaved && previousEvent.exists) return true;
+    // Older saves can have a saved outfit but no event if their second write failed.
+    await assertMediaAttachable(transaction, uid, alreadySaved ? event : [payload, event]);
+    if (!alreadySaved) transaction.set(savedRef, payload, { merge: true });
+    transaction.set(eventRef, event, { merge: true });
+    return alreadySaved;
+  });
 }
 
 async function defaultGetWearEvent(uid: string, id: string) {
@@ -497,17 +505,6 @@ export async function handleSaveAuraAgentOutfit(
   const userId = requireAuthUid(uid);
   const input = normalizeInput(data);
   const id = `aura_agent_${input.outfit.outfitFingerprint}`;
-  const existing = await (deps.getSavedOutfit ?? defaultGetSavedOutfit)(userId, id);
-  if (existing && existing.active !== false) {
-    await safeRecordAuraMetricEvent(userId, { type: "saved_outfit_duplicate" });
-    return {
-      saved: true,
-      alreadySaved: true,
-      savedOutfitId: id,
-      message: "Already saved.",
-    };
-  }
-
   const timestamp = deps.now?.() ?? new Date();
   const payload = {
     id,
@@ -535,25 +532,27 @@ export async function handleSaveAuraAgentOutfit(
     active: true,
     deletedAt: FieldValue.delete(),
   };
-  await (deps.setSavedOutfit ?? defaultSetSavedOutfit)(userId, id, payload);
-  await (deps.setOutfitEvent ?? defaultSetOutfitEvent)(userId, `saved_${input.outfit.outfitFingerprint}`, buildCalendarEventPayload({
-    id: `saved_${input.outfit.outfitFingerprint}`,
-    userId,
-    type: "saved",
-    status: "planned",
-    input,
-    savedOutfitId: id,
-  }));
-  await recordFeedbackOnce(userId, input, "save", deps);
-  await safeRecordAuraMetricEvent(userId, {
-    type: "saved_outfit_created",
-    source: "aura_agent",
+  const eventId = `saved_${input.outfit.outfitFingerprint}`;
+  const event = buildCalendarEventPayload({
+    id: eventId, userId, type: "saved", status: "planned", input, savedOutfitId: id,
   });
+  const alreadySaved = await (deps.persistSavedOutfit ?? persistSavedOutfit)(userId, id, payload, eventId, event);
+  if (alreadySaved) {
+    await safeRecordAuraMetricEvent(userId, { type: "saved_outfit_duplicate" });
+  } else {
+    try {
+      await recordFeedbackOnce(userId, input, "save", deps);
+    } catch {
+      // The user-visible transaction committed. Feedback is optional and separately consented.
+      logger.warn("[AuraAgent] Optional save feedback could not be recorded.", { user: redactUid(userId) });
+    }
+    await safeRecordAuraMetricEvent(userId, { type: "saved_outfit_created", source: "aura_agent" });
+  }
   return {
     saved: true,
-    alreadySaved: false,
+    alreadySaved,
     savedOutfitId: id,
-    message: "Added to your saved outfits.",
+    message: alreadySaved ? "Already saved." : "Added to your saved outfits.",
   };
 }
 

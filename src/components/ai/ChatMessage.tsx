@@ -680,6 +680,7 @@ function ChatMessage({
               ) : null}
               <AuraAgentMessage
                 colors={colors}
+                itemsById={itemsById}
                 response={message.agentResponse}
                 selectedOutfitId={selectedAgentOutfitId}
                 disabled={message.streaming || auraAgentActionsDisabled}

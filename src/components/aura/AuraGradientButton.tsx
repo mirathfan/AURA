@@ -37,6 +37,8 @@ export default function AuraGradientButton({
     ] as const);
   return (
     <AuraPressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
       disabled={disabled}
       onPress={onPress}
       haptic="light"

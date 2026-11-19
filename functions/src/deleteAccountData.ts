@@ -2,7 +2,6 @@ import { ACCOUNT_DELETION_CONTRACT } from "../../shared/releaseContract";
 import { recoverRetiredMedia, removeRetiredUpload, queueMediaSweep, recoverMediaSweeps, recoverMediaInventories, recoverExpiredMediaLocks } from "./shared/mediaSafety";
 import { recoverStalledIngestion } from "./shared/ingestionLifecycle";
 import { recoverItemMedia, removeDeletedItemUpload } from "./shared/itemLifecycle";
-import { recoverWardrobeIndexing } from "./ai/wardrobeIntelligence/indexingRecovery";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
@@ -47,13 +46,12 @@ export const continueAccountDeletion = onDocumentCreated({
 // Order by the single dueAt field; completed tombstones have no dueAt.
 export const recoverAccountDeletions = onSchedule({
   schedule: "every 5 minutes", timeoutSeconds: 540, memory: "512MiB",
-  secrets: ["OPENAI_API_KEY"], maxInstances: 1, concurrency: 1,
+  maxInstances: 1, concurrency: 1,
 }, async () => {
   const due = await getFirestore().collection(DELETION_COLLECTION)
     .where("dueAt", "<=", Timestamp.now()).orderBy("dueAt").limit(10).get();
   const results = await Promise.allSettled([
     Promise.all(due.docs.map((doc) => processAccountDeletion(doc.id))),
-    recoverWardrobeIndexing(),
     recoverExpiredMediaLocks(), recoverItemMedia(), recoverRetiredMedia(), recoverMediaSweeps(), recoverMediaInventories(),
     recoverStalledIngestion(),
   ]);

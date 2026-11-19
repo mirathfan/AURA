@@ -519,7 +519,7 @@ export async function saveSelectedOutfitExtractionItems(params: {
       createdAt: now,
       updatedAt: now,
       isDraft: false,
-      draftState: null,
+      draftState: "ready",
       itemLifecycleStatus: "ready",
       ingestionStatus: "done",
       ingestion: {

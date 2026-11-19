@@ -126,6 +126,23 @@ function withColors(nextCandidate: OutfitCandidate, colors: string[]): OutfitCan
 }
 
 describe("validateGeneratedOutfits", () => {
+  it("requires an available warm layer for a cold walk and rejects office drift", () => {
+    const request = normalizeOutfitGenerationInput({
+      query: "Keep the pants and make it work for a cold walk.", occasion: "dinner date",
+      weather: "cold", requiredItemIds: ["trousers"], avoidItemIds: ["old-shoes"],
+    });
+    const closet = context({outerwear: [candidate("coat", "outerwear", "Wool overcoat")]});
+    const edited = { ...outfit([
+      {itemId: "shirt", role: "top", reason: ""},
+      {itemId: "trousers", role: "bottom", reason: ""},
+      {itemId: "loafers", role: "footwear", reason: ""},
+    ]), occasion: "dinner date" };
+    expect(validateGeneratedOutfits([edited], closet, request).errors.join(" ")).toMatch(/warm layer/i);
+    edited.items.push({ itemId: "coat", role: "outerwear", reason: "Cold walk" });
+    expect(validateGeneratedOutfits([edited], closet, request).valid).toBe(true);
+    expect(validateGeneratedOutfits([{...edited, occasion: "office"}], closet, request).valid).toBe(false);
+  });
+
   it("passes a valid top + bottom + footwear outfit", () => {
     const result = validateGeneratedOutfits([
       outfit([

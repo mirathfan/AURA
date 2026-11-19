@@ -13,11 +13,13 @@ import {
 import { Fonts, type AppColors } from "@/constants/theme";
 import AuraAgentOutfitCard from "@/src/components/aura/AuraAgentOutfitCard";
 import { getAgentOutfitCardWidth } from "@/src/components/aura/AuraAgentOldStyleOutfitCard";
+import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraAgentOutfit, AuraAgentSuggestedAction } from "@/src/types/auraAgent";
 
 const PAGE_GAP = 10;
 
 export type AuraAgentOutfitCarouselProps = {
+  itemsById?: Map<string, ClothingItem>;
   outfits: AuraAgentOutfit[];
   colors: AppColors;
   selectedOutfitId?: string | null;
@@ -67,6 +69,7 @@ function selectedIndexForOutfitId(
 
 export default function AuraAgentOutfitCarousel(props: AuraAgentOutfitCarouselProps) {
   const {
+    itemsById,
     outfits,
     colors,
     selectedOutfitId,
@@ -81,13 +84,14 @@ export default function AuraAgentOutfitCarousel(props: AuraAgentOutfitCarouselPr
   const [activeIndex, setActiveIndex] = React.useState(initialActiveIndex);
   const hasMultipleOutfits = shouldRenderAgentOutfitCarousel(outfits.length);
 
+  const userScrolling = React.useRef(false);
   const selectIndex = React.useCallback(
     (index: number) => {
       if (!outfits.length) return;
       const nextIndex = Math.min(Math.max(0, Math.round(index)), outfits.length - 1);
       setActiveIndex((current) => (current === nextIndex ? current : nextIndex));
       const nextOutfit = outfits[nextIndex];
-      if (nextOutfit) onSelectedOutfitChange?.(nextOutfit, nextIndex);
+      if (nextOutfit && userScrolling.current) onSelectedOutfitChange?.(nextOutfit, nextIndex);
     },
     [onSelectedOutfitChange, outfits],
   );
@@ -127,6 +131,7 @@ export default function AuraAgentOutfitCarousel(props: AuraAgentOutfitCarouselPr
       <View testID="aura-agent-outfit-carousel-single" style={styles.singleCard}>
         <AuraAgentOutfitCard
           colors={colors}
+          itemsById={itemsById}
           outfit={outfits[0]}
           showSelectedIndicator={false}
           showDetails={false}
@@ -138,6 +143,7 @@ export default function AuraAgentOutfitCarousel(props: AuraAgentOutfitCarouselPr
 
   function handleMomentumScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
     selectIndex(event.nativeEvent.contentOffset.x / snapInterval);
+    userScrolling.current = false;
   }
 
   return (
@@ -152,6 +158,7 @@ export default function AuraAgentOutfitCarousel(props: AuraAgentOutfitCarouselPr
           <View style={[styles.page, { width: cardWidth, marginRight: PAGE_GAP }]}>
             <AuraAgentOutfitCard
               colors={colors}
+              itemsById={itemsById}
               outfit={item}
               selected={item.outfitId === outfits[activeIndex]?.outfitId}
               showSelectedIndicator={false}
@@ -174,6 +181,8 @@ export default function AuraAgentOutfitCarousel(props: AuraAgentOutfitCarouselPr
           offset: snapInterval * index,
           index,
         })}
+        onScrollBeginDrag={() => { userScrolling.current = true; }}
+        onScrollEndDrag={(event) => selectIndex(event.nativeEvent.contentOffset.x / snapInterval)}
         onMomentumScrollEnd={handleMomentumScrollEnd}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}

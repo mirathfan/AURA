@@ -50,6 +50,7 @@ export type AIMessage = {
   kind?: "user_text" | "aura_text" | "aura_card" | "aura_agent" | "system";
   text?: string;
   requiredItemIds?: string[];
+  outfitSave?: { kind: "choose" } | { kind: "target"; messageId: string; outfitId: string };
   assistantIntroText?: string;
   attachments?: ChatAttachment[];
   streaming?: boolean;

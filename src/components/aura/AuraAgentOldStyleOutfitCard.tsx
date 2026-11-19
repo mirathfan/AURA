@@ -22,6 +22,7 @@ import {
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { formatAuraVibeLabel } from "@/src/lib/auraAgentDisplay";
 import { sanitizeDisplayText } from "@/src/lib/text";
+import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLook, AuraLookPiece } from "@/src/types/aura";
 import type {
   AuraAgentOutfit,
@@ -65,6 +66,7 @@ export type AuraAgentOldStyleOutfitCardModel = {
 };
 
 export type AuraAgentOldStyleOutfitCardProps = {
+  itemsById?: Map<string, ClothingItem>;
   outfit: AuraAgentOutfit;
   colors?: AppColors;
   selected?: boolean;
@@ -156,7 +158,7 @@ function lookPieceForAgentItem(item: AuraAgentOutfitItem): AuraLookPiece {
     role: lookRoleForAgentRole(item.role),
     itemName: itemDisplayName(item),
     source: "closet",
-    itemId: null,
+    itemId: item.itemId,
     imageUrl: item.imageUrl,
   };
 }
@@ -435,6 +437,7 @@ function SelectedPill({ colors }: { colors: AppColors }) {
 }
 
 export default function AuraAgentOldStyleOutfitCard({
+  itemsById,
   outfit,
   colors: providedColors,
   selected = false,
@@ -470,6 +473,7 @@ export default function AuraAgentOldStyleOutfitCard({
         pressedOpacity={0.96}
         pressedScale={0.995}
         disabledOpacity={1}
+        accessible={Boolean(onSelect)}
         accessibilityRole={onSelect ? "button" : undefined}
         accessibilityLabel={cardAccessibilityLabel}
         accessibilityState={showSelectedIndicator ? { selected } : undefined}
@@ -478,6 +482,7 @@ export default function AuraAgentOldStyleOutfitCard({
         <View style={styles.visualWrap}>
           <View testID="aura-agent-old-style-visual-card">
             <AuraOutfitVisualCard
+              itemsById={itemsById}
               look={model.look}
               colors={colors}
               mode={compact ? "medium" : "full"}
