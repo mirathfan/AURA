@@ -1,3 +1,4 @@
+import { parseFootwearSwap, matchesFootwearKind } from "./footwearSwap";
 import { loadWardrobeForRetrieval, retrieveHybridCandidates } from "./hybridRetrieval";
 import {
   hasHardRotationRequest,
@@ -117,9 +118,11 @@ export function normalizeOutfitGenerationInput(value: unknown): NormalizedOutfit
     weatherContext: normalizeOutfitWeatherContext(data.weatherContext),
   });
   const weatherContext = resolvedWeather.weatherContext;
+  const swap = parseFootwearSwap(userText);
   return {
     query,
     userText,
+    ...(swap ? { replacementFootwear: swap.kind } : {}),
     targetDay: resolvedWeather.targetDay,
     ...(resolvedWeather.ignoredReason ? { weatherIgnoredReason: resolvedWeather.ignoredReason } : {}),
     count: Math.max(1, Math.min(MAX_OUTFIT_COUNT, Number.isFinite(count) ? Math.floor(count) : DEFAULT_OUTFIT_COUNT)),
@@ -580,8 +583,10 @@ async function defaultRetrieveRoleCandidates(args: {
     args.wardrobe ? { wardrobe: args.wardrobe } : {},
   );
   const required = new Set(args.input.requiredItemIds);
+  const target = args.role === "footwear" ? args.input.replacementFootwear : undefined;
   const candidates = allCandidates.filter((candidate) =>
-    required.has(candidate.itemId) || laundryStateForItem(candidate.item) !== "in_laundry");
+    (required.has(candidate.itemId) || laundryStateForItem(candidate.item) !== "in_laundry") &&
+    (!target || matchesFootwearKind(target, candidate.item)));
   const results = buildWardrobeRetrievalResults({
     query: args.query,
     limit: args.limit,
@@ -753,6 +758,11 @@ export async function retrieveOutfitGenerationContext(
   const withRequiredCandidates = mergeRequiredCandidates(candidates, requiredResult.candidates);
   const canonicalWithRequired = canonicalizeOutfitCandidateBuckets(withRequiredCandidates);
   const laundryFiltered = excludeLaundryCandidates(canonicalWithRequired, normalized.requiredItemIds);
+  const target = normalized.replacementFootwear;
+  if (target) {
+    laundryFiltered.buckets.footwear = laundryFiltered.buckets.footwear.filter((item) =>
+      !normalized.avoidItemIds.includes(item.itemId) && matchesFootwearKind(target, item));
+  }
   const rotationFiltered = applyWearRotation(laundryFiltered.buckets, {
     keepItemIds: normalized.requiredItemIds,
     userText: normalized.userText,

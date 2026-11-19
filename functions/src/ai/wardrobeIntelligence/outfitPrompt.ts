@@ -137,6 +137,7 @@ export function buildOutfitGenerationUserPrompt(
       : null,
     hardConstraints: {
       requiredItemIds: input.requiredItemIds,
+      ...(input.replacementFootwear ? { replacementFootwear: input.replacementFootwear } : {}),
       ...(warmLayers ? { warmLayerItemIds: warmLayers } : {}),
       avoidItemIds: input.avoidItemIds,
       avoidTerms: input.avoidTerms,

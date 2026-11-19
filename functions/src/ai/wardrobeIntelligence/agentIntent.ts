@@ -1,3 +1,4 @@
+import { parseFootwearSwap } from "./footwearSwap";
 import { normalizeOutfitRoleAlias } from "./outfitRole";
 import { isWorkOccasion } from "./outfitSignals";
 import type { WardrobeRetrievalFormality } from "./retrievalTypes";
@@ -272,7 +273,16 @@ function refinementEdits(request: AuraStylingAgentRequest, text: string) {
   const avoid = new Set<string>();
   const avoidTerms = stringArray((request as { avoidTerms?: unknown }).avoidTerms);
   const clauses = text.split(EDIT_VERBS);
-  let hasRoleInstruction = false;
+  const footwearSwap = parseFootwearSwap(text);
+  if (footwearSwap) {
+    for (const item of items) {
+      const role = normalizeOutfitRoleAlias(item.role ?? item.allowedRole ?? item.category);
+      const id = cleanText(item.itemId);
+      if (role === "footwear") avoid.add(id);
+      else if (footwearSwap.onlyChange && role !== "unknown") keep.add(id);
+    }
+  }
+  let hasRoleInstruction = Boolean(footwearSwap);
   for (let index = 1; index < clauses.length; index += 2) {
     const action = clauses[index];
     const object = clauses[index + 1].split(/[.!?;]|\b(?:but|with|for|to|instead of)\b/)[0];

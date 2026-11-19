@@ -1,3 +1,4 @@
+import { matchesFootwearKind } from "./footwearSwap";
 import type {
   GeneratedOutfit,
   NormalizedOutfitGenerationInput,
@@ -590,8 +591,10 @@ export function unavailableRefinementConstraints(
   input: NormalizedOutfitGenerationInput, context: OutfitGenerationContext, replacingFootwear: boolean,
 ): string[] {
   const missing: string[] = [];
-  if (replacingFootwear && !context.candidates.footwear.some((item) => eligibleForEdit(item, input))) {
-    missing.push("another eligible pair of shoes to replace the original pair");
+  const target = input.replacementFootwear;
+  if ((replacingFootwear || target) && !context.candidates.footwear.some((item) =>
+    eligibleForEdit(item, input) && (!target || matchesFootwearKind(target, item)))) {
+    missing.push(target ? `a pair of ${target} for the swap` : "another eligible pair of shoes to replace the original pair");
   }
   if (warmLayerItemIds(input, context)?.length === 0) missing.push("a warm layer for the cold walk");
   return missing;
@@ -656,6 +659,9 @@ export function validateGeneratedOutfits(
       }
       const allowedRole = candidateAllowedRole(candidate);
       const generatedRole = normalizeOutfitRoleAlias(item.role);
+      if (input.replacementFootwear && allowedRole === "footwear" && candidate && !matchesFootwearKind(input.replacementFootwear, candidate)) {
+        errors.push(`${prefix}: the replacement footwear must be ${input.replacementFootwear}.`);
+      }
       if (candidate && allowedRole && generatedRole !== allowedRole) {
         if (!(allowedRole === "outerwear" && generatedRole === "top" && isSafeOuterwearAsTop(candidate))) {
           errors.push(`${prefix}: itemId ${item.itemId} was used as ${item.role} but allowedRole is ${allowedRole}.`);

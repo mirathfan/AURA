@@ -386,6 +386,21 @@ describe("runAuraStylingAgentGraph", () => {
     expect(response.outfits?.[0].items.map((item) => item.itemId)).toEqual(["cargos", "tee", "boots", "puffer"]);
   });
 
+  it("explains that boots are unavailable when another shoe exists", async () => {
+    const harness = deps({ retrieveOutfitContext: async () => context() });
+    const response = await runAuraStylingAgentGraph("uid", {
+      query: "Swap the sneakers for boots.",
+      previousOutfit: { occasion: "dinner", items: [
+        { itemId: "shirt", role: "top" }, { itemId: "pants", role: "bottom" },
+        { itemId: "sneakers", role: "footwear" },
+      ] },
+      useStyleMemory: false,
+    }, harness.deps);
+    expect(response.outfits ?? []).toHaveLength(0);
+    expect(response.message).toMatch(/couldn't find.*boots/);
+    expect(harness.calls.some((call) => call.startsWith("generate:"))).toBe(false);
+  });
+
   it("explains both unavailable shoes and warmth without producing a replacement card", async () => {
     const harness = deps({retrieveOutfitContext: async () => context()});
     const response = await runAuraStylingAgentGraph("uid", {
