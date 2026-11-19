@@ -46,6 +46,25 @@ const outfit: AuraAgentOutfit = {
 };
 
 describe("aura agent action helpers", () => {
+  it.each([
+    "It is 36°F outside. I’d like a dinner outfit with my Camel Wool Overcoat.",
+    "dinner outfit with my camel wool overcoat",
+    "I would like a dinner outfit with my overcoat.",
+  ])("routes a fresh named-garment outfit request to generation: %s", (prompt) => {
+    const chatIntent = classifyAuraChatIntent(prompt, { hasPreviousLook: false });
+    expect(chatIntent).toBe("GENERATE_OUTFIT");
+    expect(shouldRouteToAuraStylingAgent({ enabled: true, prompt, attachmentCount: 0, chatIntent })).toBe(true);
+    expect(buildAuraAgentInitialRequest({ prompt, chatIntent })).toMatchObject({ mode: "generate_outfit", query: prompt });
+  });
+
+  it.each([
+    "I’d like to know how to clean my Camel Wool Overcoat.",
+    "Why does a dinner outfit with my Camel Wool Overcoat look polished?",
+    "Does an outfit with my coat need a scarf?",
+  ])("keeps informational garment questions in chat: %s", (prompt) => {
+    expect(classifyAuraChatIntent(prompt, { hasPreviousLook: false })).toBe("GENERAL_CHAT");
+  });
+
   it("starts a fresh presentation look and keeps the sneaker exclusion", () => {
     const prompt = "Tomorrow is a client presentation. Business casual, no sneakers.";
     const intent = classifyAuraStylingIntent(prompt, { hasPreviousOutfit: false });
