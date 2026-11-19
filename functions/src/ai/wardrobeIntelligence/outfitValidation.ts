@@ -434,6 +434,7 @@ export function scoreOutfitDiversity(
   outfit: GeneratedOutfit,
   previouslySelectedOutfits: GeneratedOutfit[],
   context: OutfitGenerationContext,
+  hasAlternativeBottom = context.candidates.bottom.length > 1,
 ): { score: number; penalties: string[] } {
   if (!previouslySelectedOutfits.length) return { score: 1, penalties: [] };
   const penalties: string[] = [];
@@ -443,7 +444,6 @@ export function scoreOutfitDiversity(
   const bottomNames = new Map(context.candidates.bottom.map(item => [item.itemId, normalizedText(item.name) || item.itemId]));
   const visibleKey = (item: GeneratedOutfit["items"][number]) => item.role === "bottom" ?
     bottomNames.get(item.itemId) ?? item.itemId : item.itemId;
-  const bottomChoices = new Set(bottomNames.values()).size;
 
   for (const item of outfit.items) {
     const repeatCount = previousItems.filter(previous => previous.role === item.role && visibleKey(previous) === visibleKey(item)).length;
@@ -454,7 +454,7 @@ export function scoreOutfitDiversity(
       penalty += nextPenalty * repeatCount;
       penalties.push(`reused top ${item.itemId}`);
     } else if (item.role === "bottom") {
-      const nextPenalty = bottomChoices <= 1 ? 0.03 : 0.28;
+      const nextPenalty = hasAlternativeBottom ? 0.28 : 0.03;
       penalty += nextPenalty * repeatCount;
       penalties.push(`reused bottom ${item.itemId}`);
     } else if (item.role === "footwear") {
@@ -481,7 +481,7 @@ export function scoreOutfitDiversity(
   if (signature && previouslySelectedOutfits.some((entry) => coreSignature(entry) === signature)) {
     const hasAlternatives =
       (candidateCounts.top ?? 0) > 1 ||
-      (candidateCounts.bottom ?? 0) > 1 ||
+      hasAlternativeBottom ||
       (candidateCounts.footwear ?? 0) > 1 ||
       (candidateCounts.one_piece ?? 0) > 1;
     if (hasAlternatives) {
@@ -1131,12 +1131,13 @@ export function buildValidatedOutfitResponse(
 
   const selected: typeof entries = [];
   const remaining = [...entries];
+  const hasAlternativeBottom = batchBottomChoices(input, context).length > 1;
   while (remaining.length) {
     let bestIndex = 0;
     let bestAdjustedScore = Number.NEGATIVE_INFINITY;
-    let bestDiversity = scoreOutfitDiversity(remaining[0].source, selected.map((entry) => entry.source), context);
+    let bestDiversity = scoreOutfitDiversity(remaining[0].source, selected.map((entry) => entry.source), context, hasAlternativeBottom);
     remaining.forEach((entry, index) => {
-      const diversity = scoreOutfitDiversity(entry.source, selected.map((selectedEntry) => selectedEntry.source), context);
+      const diversity = scoreOutfitDiversity(entry.source, selected.map((selectedEntry) => selectedEntry.source), context, hasAlternativeBottom);
       const adjustedScore = entry.response.scoreBreakdown.total + ((diversity.score - 1) * 0.2);
       if (adjustedScore > bestAdjustedScore) {
         bestAdjustedScore = adjustedScore;

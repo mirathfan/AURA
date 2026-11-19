@@ -186,6 +186,26 @@ describe("generateValidatedOutfitsFromContext", () => {
       .toEqual(["Black straight trousers", "Dark Indigo Straight Jeans"]);
   });
 
+  it("gives the only dinner-suitable bottom the same repeat allowance when casual joggers are available", async () => {
+    const ctx = context();
+    const joggers = candidate("joggers", "bottom", "Cotton sweatpants");
+    ctx.candidates.bottom.push(joggers);
+    ctx.candidates.top.push(candidate("knit", "top", "Gray knit polo"));
+    ctx.candidates.footwear.push(candidate("derbies", "footwear", "Black leather derbies"));
+    ctx.diagnostics.candidateCounts = { ...ctx.diagnostics.candidateCounts, bottom: 2, top: 2, footwear: 2 };
+    const first = { ...JSON.parse(validPayload()).outfits[0], occasion: "dinner" };
+    const second = { ...first, items: [
+      { role: "top", itemId: "knit", reason: "knitwear" },
+      { role: "bottom", itemId: "trousers", reason: "tailoring" },
+      { role: "footwear", itemId: "derbies", reason: "polished footwear" },
+    ] };
+    const client = openAiClient([JSON.stringify({ outfits: [first, second] })]);
+    const result = await generateValidatedOutfitsFromContext(
+      normalizeOutfitGenerationInput({ query: "two dinner looks", occasion: "dinner", count: 2 }), ctx, { client },
+    );
+    expect(result.outfits[1].scoreBreakdown.diversityScore).toBe(0.97);
+  });
+
   it("drops an invalid surplus draft without buying a repair when the batch is full", async () => {
     const ctx = context();
     ctx.candidates.bottom.push(candidate("jeans", "bottom", "Dark Indigo Jeans"));
