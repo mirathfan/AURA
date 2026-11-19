@@ -353,6 +353,39 @@ describe("runAuraStylingAgentGraph", () => {
     expect(seenRequiredIds[0]).toEqual(["pants"]);
   });
 
+  it.each([
+    ["incomplete prose", "Pair the tee and cargos with your Chelsea boots."],
+    ["incorrect outerwear", "Keep your cargos and pull on the Camel Wool Overcoat."],
+    ["a repaired card without model prose", undefined],
+  ])("names the final card's warm layer after a cold-walk edit with %s", async (_case, stylistMessage) => {
+    const closet = context();
+    const tee = candidate("tee", "top", "Black Boxy Tee");
+    const cargos = candidate("cargos", "bottom", "Black Wide Cargos");
+    const boots = candidate("boots", "footwear", "Brown Leather Chelsea Boots");
+    const puffer = candidate("puffer", "outerwear", "Black Down Puffer");
+    const coat = candidate("coat", "outerwear", "Camel Wool Overcoat");
+    closet.candidates = {...closet.candidates, top: [tee], bottom: [cargos], footwear: [boots], outerwear: [coat, puffer]};
+    const edited = {...outfit(), occasion: "dinner", items: [cargos, tee, boots, puffer]};
+    const harness = deps({
+      retrieveOutfitContext: async () => closet,
+      loadUserPreferences: async () => null,
+      generateOutfits: async () => ({
+        outfits: [edited], stylistMessage, validationErrors: [], validationWarnings: [], repaired: !stylistMessage,
+      }),
+    });
+
+    const response = await runAuraStylingAgentGraph("uid", {
+      query: "I like the second one. Keep the pants, swap the shoes, and make it work for a cold walk.",
+      previousOutfit: {occasion: "dinner", items: [tee, cargos, candidate("derbies", "footwear", "Black Derbies")]},
+      useStyleMemory: false,
+    }, harness.deps);
+
+    expect(response.messageSource).toBe("stylist");
+    for (const item of edited.items) expect(response.message).toContain(item.name);
+    expect(response.message).not.toContain(coat.name);
+    expect(response.outfits?.[0].items.map((item) => item.itemId)).toEqual(["cargos", "tee", "boots", "puffer"]);
+  });
+
   it("explains both unavailable shoes and warmth without producing a replacement card", async () => {
     const harness = deps({retrieveOutfitContext: async () => context()});
     const response = await runAuraStylingAgentGraph("uid", {

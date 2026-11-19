@@ -6,6 +6,7 @@ import type {
   AuraStylingAgentState,
 } from "./agentTypes";
 import type { OutfitLaundryNotices } from "./outfitTypes";
+import { warmLayerItemIds } from "./outfitValidation";
 import type { StyleMemoryContextResponse } from "./styleMemoryTypes";
 
 const CLIENT_VECTOR_KEYS = new Set([
@@ -128,8 +129,20 @@ function laundryNotice(state: AuraStylingAgentState): string {
   return laundryNoticeText(state.context?.diagnostics.laundryNotices);
 }
 
-function buildMessage(state: AuraStylingAgentState): string {
-  const base = buildBaseMessage(state);
+// Describe the validated card even if the generator omitted its coat or a repair changed it.
+function coldWalkEditMessage(state: AuraStylingAgentState): string | undefined {
+  const outfit = state.outfits?.[0];
+  if (state.intent?.mode !== "refine_outfit" || !outfit || !state.input || !state.context) return undefined;
+  const warmIds = warmLayerItemIds(state.input, state.context);
+  const layer = outfit.items.find((item) => warmIds?.includes(item.itemId));
+  if (!layer) return undefined;
+
+  const otherPieces = outfit.items.filter((item) => item.itemId !== layer.itemId).map((item) => item.name);
+  const lead = (state.outfits?.length ?? 0) > 1 ? "For the first look, wear" : "Wear";
+  return `${lead} your ${joinNames(otherPieces)} with the ${layer.name} for warmth.`;
+}
+
+function buildMessage(state: AuraStylingAgentState, base = buildBaseMessage(state)): string {
   const mode = state.intent?.mode ?? "unknown";
   const notice = mode === "generate_outfit" || mode === "refine_outfit" ? laundryNotice(state) : "";
   return notice ? `${base} ${notice}` : base;
@@ -221,13 +234,13 @@ export function buildAgentResponse(state: AuraStylingAgentState): AuraStylingAge
     throw new Error("Cannot build agent response before intent classification.");
   }
   const memoryWarnings = state.diagnostics.warnings.filter((warning) => /style memory/i.test(warning));
+  const editMessage = coldWalkEditMessage(state);
   const response: AuraStylingAgentResponse = {
     mode: state.intent.mode,
     intent: state.intent,
-    message: buildMessage(state),
-    // "stylist" tells the app to show this message as written. A laundry
-    // notice must be shown too, so it also sets it.
-    messageSource: (state.stylistMessage || laundryNotice(state)) && state.outfits?.length ? "stylist" : "template",
+    message: buildMessage(state, editMessage),
+    // Preserve grounded edit and laundry details when the app formats the chat reply.
+    messageSource: (editMessage || state.stylistMessage || laundryNotice(state)) && state.outfits?.length ? "stylist" : "template",
     suggestedActions: suggestedActions(state),
     ...(state.input?.count ? {requestedCount: state.input.count} : {}),
     ...(state.outfits ? { outfits: state.outfits } : {}),

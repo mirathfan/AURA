@@ -1,3 +1,4 @@
+import { classifyAuraStylingIntent } from "@/shared/auraStylingIntelligence";
 import { classifyAuraChatIntent } from "@/src/lib/auraChatHelpers";
 import {
   auraAgentActionStateKey,
@@ -45,6 +46,40 @@ const outfit: AuraAgentOutfit = {
 };
 
 describe("aura agent action helpers", () => {
+  it("starts a fresh presentation look and keeps the sneaker exclusion", () => {
+    const prompt = "Tomorrow is a client presentation. Business casual, no sneakers.";
+    const intent = classifyAuraStylingIntent(prompt, { hasPreviousOutfit: false });
+    const chatIntent = classifyAuraChatIntent(prompt, { hasPreviousLook: false });
+    const request = buildAuraAgentInitialRequest({ prompt, chatIntent });
+
+    expect(intent.intent).toBe("generate_outfit");
+    expect(intent.occasion).toBe("business_casual");
+    expect(intent.excludedCategories).toContain("sneaker");
+    expect(intent.requestedChanges).not.toContain("remove:footwear");
+    expect(chatIntent).toBe("GENERATE_OUTFIT");
+    expect(request).toMatchObject({ mode: "generate_outfit", query: prompt });
+    expect(request.previousOutfit).toBeUndefined();
+  });
+
+  it("edits the current look when asked to swap its sneakers for boots", () => {
+    const prompt = "Swap the sneakers for boots.";
+    const current = {
+      ...outfit,
+      items: [outfit.items[0], { ...outfit.items[1], itemId: "sneaker-1", name: "White sneakers" }],
+    };
+    const intent = classifyAuraStylingIntent(prompt, { hasPreviousOutfit: true });
+    const chatIntent = classifyAuraChatIntent(prompt, { hasPreviousLook: true });
+    const request = buildAuraAgentInitialRequest({ prompt, chatIntent, previousAgentOutfit: current });
+
+    expect(intent.intent).toBe("replace_piece");
+    expect(intent.requestedChanges).toContain("replace:footwear");
+    expect(chatIntent).toBe("MODIFY_OUTFIT");
+    expect(request).toMatchObject({
+      mode: "refine_outfit", query: prompt, outfitId: current.outfitId,
+      previousOutfit: { items: [{ itemId: "shirt-1" }, { itemId: "sneaker-1" }] },
+    });
+  });
+
   it.each([
     "I like the second one. Keep the pants, swap the shoes, and make it work for a cold walk.",
     "For option two replace the footwear but retain the trousers for a chilly stroll.",
