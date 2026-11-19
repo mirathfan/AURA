@@ -10,7 +10,7 @@ import type {
   OutfitValidationWarning,
   ValidatedOutfit,
 } from "./outfitTypes";
-import { isWorkOccasion } from "./outfitSignals";
+import { isNotFreshForRole, isWorkOccasion, isWornTooRecently } from "./outfitSignals";
 import { isSafeOuterwearAsTop, normalizeOutfitRoleAlias } from "./outfitRole";
 
 function normalizedText(value: unknown): string {
@@ -405,6 +405,31 @@ export function scoreColorCoherence(items: OutfitCandidate[]): { score: number; 
   };
 }
 
+// Suggest one representative per displayed garment. The closet can contain
+// several owned IDs that look identical on a card.
+export function batchBottomChoices(input: NormalizedOutfitGenerationInput, context: OutfitGenerationContext): string[] {
+  const { bottom, one_piece: dresses } = context.candidates;
+  if (input.count < 2 || [...bottom, ...dresses].some(item => input.requiredItemIds.includes(item.itemId))) return [];
+  const [min, max] = getTargetFormalityRange({
+    ...context.retrievalPlan.intent, query: input.userText, occasion: input.occasion ?? context.retrievalPlan.intent.occasion,
+    formality: input.formality === "any" ? context.retrievalPlan.intent.formality : input.formality,
+  });
+  const avoidedColors = (context.userPreferences?.avoidedColors ?? []).map(normalizedText);
+  const choices = new Map<string, string>();
+  for (const item of bottom) {
+    const formality = getEffectiveFormality(item);
+    const colors = item.colors.map(normalizedText);
+    if (formality < min - 0.5 || formality > max + 0.5 || !eligibleForEdit(item, input) ||
+        item.laundryState === "in_laundry" || isWornTooRecently("bottom", item.daysSinceWorn) ||
+        isNotFreshForRole("bottom", item.laundryState, item.wearCountSinceWash) ||
+        colors.some(color => avoidedColors.includes(color)) ||
+        (input.requiredCategories.includes("bottom") && input.requiredColors.length && !colors.some(color => input.requiredColors.includes(color)))) continue;
+    const name = normalizedText(item.name) || item.itemId;
+    if (!choices.has(name)) choices.set(name, item.itemId);
+  }
+  return choices.size > 1 ? [...choices.values()].slice(0, input.count) : [];
+}
+
 export function scoreOutfitDiversity(
   outfit: GeneratedOutfit,
   previouslySelectedOutfits: GeneratedOutfit[],
@@ -415,9 +440,13 @@ export function scoreOutfitDiversity(
   let penalty = 0;
   const candidateCounts = context.diagnostics.candidateCounts;
   const previousItems = previouslySelectedOutfits.flatMap((entry) => entry.items);
+  const bottomNames = new Map(context.candidates.bottom.map(item => [item.itemId, normalizedText(item.name) || item.itemId]));
+  const visibleKey = (item: GeneratedOutfit["items"][number]) => item.role === "bottom" ?
+    bottomNames.get(item.itemId) ?? item.itemId : item.itemId;
+  const bottomChoices = new Set(bottomNames.values()).size;
 
   for (const item of outfit.items) {
-    const repeatCount = previousItems.filter((previous) => previous.itemId === item.itemId).length;
+    const repeatCount = previousItems.filter(previous => previous.role === item.role && visibleKey(previous) === visibleKey(item)).length;
     if (!repeatCount) continue;
     const available = candidateCounts[item.role] ?? context.candidates[item.role]?.length ?? 0;
     if (item.role === "top") {
@@ -425,7 +454,7 @@ export function scoreOutfitDiversity(
       penalty += nextPenalty * repeatCount;
       penalties.push(`reused top ${item.itemId}`);
     } else if (item.role === "bottom") {
-      const nextPenalty = available <= 1 ? 0.03 : 0.14;
+      const nextPenalty = bottomChoices <= 1 ? 0.03 : 0.28;
       penalty += nextPenalty * repeatCount;
       penalties.push(`reused bottom ${item.itemId}`);
     } else if (item.role === "footwear") {
@@ -445,7 +474,7 @@ export function scoreOutfitDiversity(
 
   const coreSignature = (entry: GeneratedOutfit) => entry.items
     .filter((item) => item.role === "top" || item.role === "bottom" || item.role === "footwear" || item.role === "one_piece")
-    .map((item) => `${item.role}:${item.itemId}`)
+    .map((item) => `${item.role}:${visibleKey(item)}`)
     .sort()
     .join("|");
   const signature = coreSignature(outfit);
@@ -571,13 +600,16 @@ function eligibleForEdit(candidate: OutfitCandidate, input: NormalizedOutfitGene
 // closet has no suitable layer. Prefer a coat for a cold walk if one is ready.
 export function warmLayerItemIds(input: NormalizedOutfitGenerationInput, context: OutfitGenerationContext): string[] | null {
   const text = normalizedText(input.userText || input.query);
-  if (!/\b(cold|freezing|chilly|winter|snow)\b/.test(`${text} ${input.weather ?? ""}`) ||
-      !/\b(walk|walking|stroll|outside|outdoors?|commute|hike)\b/.test(text)) return null;
+  const coldWalk = /\b(cold|freezing|chilly|winter|snow)\b/.test(`${text} ${input.weather ?? ""}`) &&
+    /\b(walk|walking|stroll|outside|outdoors?|commute|hike)\b/.test(text);
+  const needsReplacement = context.diagnostics.laundryNotices?.needsWarmReplacement;
+  if (!coldWalk && !needsReplacement) return null;
   const warmInRole = (role: "outerwear" | "top") => {
     const pool = context.candidates[role];
     const locked = pool.filter((item) => input.requiredItemIds.includes(item.itemId));
     return (locked.length ? locked : pool).filter((item) => {
       if (!eligibleForEdit(item, input)) return false;
+      if (needsReplacement && (item.laundryState === "in_laundry" || item.status === "IN_LAUNDRY")) return false;
       const rating = Number(item.aiMetadata.warmth);
       if (rating > 0) return rating >= 4;
       return /\b(overcoat|parka|puffer|down|insulated|fleece|thermal|wool|cashmere|merino)\b/.test(candidateText(item));
@@ -683,7 +715,8 @@ export function validateGeneratedOutfits(
     }
 
     const warmIds = warmLayerItemIds(input, context);
-    if (warmIds && !warmIds.some((id) => seen.has(id))) {
+    const acknowledgedGap = warmIds?.length === 0 && context.diagnostics.laundryNotices?.needsWarmReplacement;
+    if (warmIds && !acknowledgedGap && !warmIds.some((id) => seen.has(id))) {
       errors.push(`${prefix}: cold outdoor request requires a warm layer from the eligible closet items.`);
     }
     const dinner = /\b(date|dinner|restaurant|evening)\b/;

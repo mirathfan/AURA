@@ -2,10 +2,12 @@ import OpenAI from "../../shared/consentedOpenAI";
 import { HttpsError } from "firebase-functions/v2/https";
 import { requireOpenAiApiKey } from "../../shared/env";
 import { outfitGenerationConfig } from "./config";
+import { MAX_OUTFIT_COUNT } from "./outfitContext";
 import {
   buildOutfitGenerationDeveloperPrompt,
   buildOutfitGenerationUserPrompt,
   flattenOutfitCandidates,
+  type BatchAlternatives,
 } from "./outfitPrompt";
 import { normalizeOutfitRoleAlias } from "./outfitRole";
 import type {
@@ -18,7 +20,10 @@ import type {
   ValidatedOutfit,
 } from "./outfitTypes";
 import {
+  batchBottomChoices,
   buildValidatedOutfitResponse,
+  candidateMap,
+  warmLayerItemIds,
   validateGeneratedOutfits,
 } from "./outfitValidation";
 
@@ -195,11 +200,47 @@ function outfitSchema(maxOutfits: number) {
   };
 }
 
+// The model can still name the requested laundry coat even when it correctly omits
+// its ID. Build the substitute and its visible prose from the eligible closet rows.
+function resolveColdLaundryOutfits(
+  payload: GeneratedOutfitPayload,
+  input: NormalizedOutfitGenerationInput,
+  context: OutfitGenerationContext,
+): GeneratedOutfitPayload {
+  if (!context.diagnostics.laundryNotices?.needsWarmReplacement) return payload;
+  const byId = candidateMap(context);
+  const warmIds = warmLayerItemIds(input, context) ?? [];
+  const outfits = payload.outfits.map((outfit) => {
+    const present = outfit.items.find((item) => warmIds.includes(item.itemId));
+    const layer = byId.get(present?.itemId ?? warmIds[0]);
+    let items = outfit.items;
+    if (layer && !present) {
+      // Replace a lighter coat or top in the same slot; all other slots are retained.
+      items = [...items.filter((item) => item.role !== layer.role), {
+        itemId: layer.itemId, role: layer.role, reason: "Provides warmth for the cold.",
+      }];
+    }
+    const explanation = layer
+      ? `I chose the ${layer.name} as the warm layer for this look.`
+      : "I couldn’t find a suitable warm replacement layer in your ready closet.";
+    return {
+      ...outfit,
+      items,
+      title: layer ? `Layered with the ${layer.name}` : "Available closet pieces",
+      explanation,
+      stylingTips: [],
+      missingItems: layer ? [] : ["A suitable warm layer for the cold"],
+    };
+  });
+  return { outfits, stylistMessage: outfits[0]?.explanation };
+}
+
 async function requestOutfitJson(args: {
   client: OutfitOpenAIClient;
   input: NormalizedOutfitGenerationInput;
   context: OutfitGenerationContext;
   repairInstruction?: string;
+  batch?: BatchAlternatives;
 }): Promise<GeneratedOutfitPayload> {
   const config = outfitGenerationConfig();
   const response = await args.client.responses.create({
@@ -215,7 +256,7 @@ async function requestOutfitJson(args: {
           {
             type: "input_text",
             text:
-              buildOutfitGenerationUserPrompt(args.input, args.context) +
+              buildOutfitGenerationUserPrompt(args.input, args.context, args.batch) +
               (args.repairInstruction ? `\n\nRepair instruction:\n${args.repairInstruction}` : ""),
           },
         ],
@@ -225,11 +266,11 @@ async function requestOutfitJson(args: {
       format: {
         type: "json_schema",
         name: "aura_outfit_recommendations",
-        schema: outfitSchema(args.input.count),
+        schema: outfitSchema(args.batch?.draftCount ?? args.input.count),
       },
     },
   });
-  return parseGeneratedOutfitPayload(String(response.output_text || "{}"));
+  return resolveColdLaundryOutfits(parseGeneratedOutfitPayload(String(response.output_text || "{}")), args.input, args.context);
 }
 
 function rewriteOutfitPrefix(value: string, outfitIndex: number): string {
@@ -292,7 +333,11 @@ export async function generateValidatedOutfitsFromContext(
 }> {
   const config = outfitGenerationConfig();
   const client = options.client ?? defaultClient();
-  const first = await requestOutfitJson({ client, input, context });
+  const bottoms = batchBottomChoices(input, context);
+  // Rank a small surplus in the same provider call. With exactly N drafts
+  // the diversity score could only reorder the N outfits already selected.
+  const batch = bottoms.length ? { draftCount: Math.min(input.count + 1, MAX_OUTFIT_COUNT), bottomItemIds: bottoms } : undefined;
+  const first = await requestOutfitJson({ client, input, context, batch });
   const validOutfits: GeneratedOutfit[] = [];
   const seenValidOutfits = new Set<string>();
   const invalidOutfits: InvalidOutfit[] = [];
@@ -319,7 +364,8 @@ export async function generateValidatedOutfitsFromContext(
     invalidOutfits.push({ outfit, outfitIndex, errors: validation.errors });
   });
 
-  if ((invalidOutfits.length || payloadErrors.length) && (options.repair ?? config.enableRepair)) {
+  const filledBatch = batch && validOutfits.length >= input.count;
+  if (!filledBatch && (invalidOutfits.length || payloadErrors.length) && (options.repair ?? config.enableRepair)) {
     repaired = true;
     const repairPayload = await requestOutfitJson({
       client,
@@ -402,7 +448,9 @@ export async function generateValidatedOutfitsFromContext(
     validationErrors,
     validationWarnings,
     repaired,
-    ...(stylistMessage ? { stylistMessage } : {}),
+    ...(context.diagnostics.laundryNotices?.needsWarmReplacement
+      ? { stylistMessage: outfits[0].explanation }
+      : stylistMessage ? { stylistMessage } : {}),
   };
 }
 

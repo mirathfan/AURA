@@ -259,9 +259,8 @@ export function buildLiveEvalContext(evalCase: LiveEvalCase, arm: LiveEvalArm): 
   if (arm === "full") {
     const inLaundry = closet.filter((entry) => laundryState(evalCase, entry.id) === "in_laundry");
     laundryNotices = findLaundryNotices({
-      userText: input.userText,
-      requiredItemIds: input.requiredItemIds,
-      laundryItems: inLaundry.map((entry) => ({ itemId: entry.id, name: entry.name, subcategory: entry.subcategory })),
+      ...input,
+      laundryItems: inLaundry.map((entry) => ({ itemId: entry.id, name: entry.name, category: entry.role, subcategory: entry.subcategory })),
       availableSubcategories: closet
         .filter((entry) => laundryState(evalCase, entry.id) !== "in_laundry")
         .map((entry) => entry.subcategory),
@@ -314,6 +313,10 @@ export function scoreLiveEvalHardChecks(evalCase: LiveEvalCase, itemIds: string[
   const freshAlternativeExists = (worn: LiveEvalItem) => closet.some((other) =>
     other.role === worn.role &&
     other.id !== worn.id &&
+    !evalCase.avoidItemIds?.includes(other.id) &&
+    !other.colors.some((color) => avoid.includes(color.toLowerCase())) &&
+    // A thin tee or mild-weather shoe cannot stand in for a warm piece in freezing weather.
+    (!cold || worn.warmth < 4 || other.warmth >= 4) &&
     (evalCase.wornDaysAgo?.[other.id] ?? DEFAULT_WORN_DAYS_AGO) > 2 &&
     laundryState(evalCase, other.id) !== "in_laundry");
   const cleanAlternativeExists = (used: LiveEvalItem) => closet.some((other) =>

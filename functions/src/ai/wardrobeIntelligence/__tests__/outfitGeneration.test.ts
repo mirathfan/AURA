@@ -159,6 +159,71 @@ function invalidPayload() {
 }
 
 describe("generateValidatedOutfitsFromContext", () => {
+  it("offers a different suitable bottom within a batch of dinner looks, including visually identical closet records", async () => {
+    const ctx = context();
+    const twin = { ...ctx.candidates.bottom[0], itemId: "trousers-copy" };
+    const denim = candidate("denim", "bottom", "Dark Indigo Straight Jeans");
+    const cargos = candidate("cargos", "bottom", "Black Wide Cargos");
+    cargos.aiMetadata.formality = 1;
+    ctx.candidates.bottom.push(twin, cargos, denim);
+    ctx.diagnostics.candidateCounts.bottom = 4;
+    const base = JSON.parse(validPayload()).outfits[0];
+    const drafts = ["trousers", "trousers-copy", "denim"].map(itemId => ({
+      ...base, title: itemId, occasion: "dinner",
+      items: base.items.map((item: {role: string; itemId: string}) => item.role === "bottom" ? { ...item, itemId } : item),
+    }));
+    const client = openAiClient([JSON.stringify({ outfits: drafts })]);
+    const input = normalizeOutfitGenerationInput({query: "two dinner looks", occasion: "dinner", count: 2});
+    const response = await generateValidatedOutfitsFromContext(input, ctx, {client});
+    const call = client.calls[0] as {input: {content: {text: string}[]}[]; text: {format: {schema: {properties: {outfits: {maxItems: number}}}}}};
+    const prompt = JSON.parse(call.input[1].content[0].text);
+    expect(client.calls).toHaveLength(1);
+    expect(prompt.requestedOutfitCount).toBe(2);
+    expect(prompt.batchAlternatives.bottomItemIds).toEqual(["trousers", "denim"]);
+    expect(call.text.format.schema.properties.outfits.maxItems).toBe(3);
+    expect(response.outfits).toHaveLength(2);
+    expect(response.outfits.map(outfit => outfit.items.find(item => item.role === "bottom")?.name))
+      .toEqual(["Black straight trousers", "Dark Indigo Straight Jeans"]);
+  });
+
+  it("drops an invalid surplus draft without buying a repair when the batch is full", async () => {
+    const ctx = context();
+    ctx.candidates.bottom.push(candidate("jeans", "bottom", "Dark Indigo Jeans"));
+    const first = JSON.parse(validPayload()).outfits[0];
+    const second = {...first, items: first.items.map((item: {role: string}) =>
+      item.role === "bottom" ? {...item, itemId: "jeans"} : item)};
+    const invalid = JSON.parse(invalidPayload()).outfits[0];
+    const client = openAiClient([JSON.stringify({outfits: [first, second, invalid]})]);
+    const result = await generateValidatedOutfitsFromContext(
+      normalizeOutfitGenerationInput({query: "two office looks", occasion: "office", count: 2}), ctx, {client, repair: true},
+    );
+    expect(client.calls).toHaveLength(1);
+    expect(result.outfits).toHaveLength(2);
+    expect(result.repaired).toBe(false);
+    expect(result.validationWarnings).toContainEqual(expect.objectContaining({action: "dropped"}));
+  });
+
+  it.each(["locked", "only suitable bottom", "excluded denim", "single look"])(
+    "does not request extra batch drafts for %s", async scenario => {
+      const ctx = context();
+      const second = candidate("other", "bottom", scenario === "only suitable bottom" ? "Cotton joggers" : "Dark Indigo Jeans");
+      if (scenario === "only suitable bottom") second.aiMetadata.formality = 1;
+      ctx.candidates.bottom.push(second);
+      const count = scenario === "single look" ? 1 : 3;
+      const dinner = JSON.parse(validPayload());
+      dinner.outfits[0].occasion = "dinner";
+      const client = openAiClient([JSON.stringify(dinner)]);
+      const input = normalizeOutfitGenerationInput({
+        query: "dinner", occasion: "dinner", count, requiredItemIds: scenario === "locked" ? ["trousers"] : [],
+        avoidItemIds: scenario === "excluded denim" ? ["other"] : [],
+      });
+      await generateValidatedOutfitsFromContext(input, ctx, {client});
+      const call = client.calls[0] as {input: {content: {text: string}[]}[]; text: {format: {schema: {properties: {outfits: {maxItems: number}}}}}};
+      expect(JSON.parse(call.input[1].content[0].text).batchAlternatives).toBeUndefined();
+      expect(call.text.format.schema.properties.outfits.maxItems).toBe(count);
+    },
+  );
+
   it("calls OpenAI once for valid structured output", async () => {
     const client = openAiClient([validPayload()]);
     const result = await generateValidatedOutfitsFromContext(

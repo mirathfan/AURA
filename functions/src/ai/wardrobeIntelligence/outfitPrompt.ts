@@ -76,7 +76,7 @@ export function buildOutfitGenerationDeveloperPrompt(): string {
     "Return JSON only. No markdown. No prose outside JSON.",
     "Only use itemIds from the provided candidates.",
     "If hardConstraints.requiredItemIds is non-empty, every returned outfit must include every exact required itemId unless no valid outfit is possible.",
-    "For a cold outdoor request, include one of hardConstraints.warmLayerItemIds when supplied. Preserve the specified occasion when editing a look.",
+    "Include an eligible layer from hardConstraints.warmLayerItemIds when supplied. If the requested coat is unavailable, use a ready warm layer and describe the actual substitute. If none exists, acknowledge the gap. Preserve the specified occasion when editing a look.",
     "Never use hardConstraints.avoidItemIds or items matching hardConstraints.avoidTerms.",
     "You must use each item only with its allowedRole. If an item has allowedRole top, use role top. If allowedRole footwear, use role footwear.",
     "Each outfit must be wearable and internally coherent.",
@@ -97,9 +97,15 @@ export function buildOutfitGenerationDeveloperPrompt(): string {
   ].join(" ");
 }
 
+export type BatchAlternatives = {
+  draftCount: number;
+  bottomItemIds: string[];
+};
+
 export function buildOutfitGenerationUserPrompt(
   input: NormalizedOutfitGenerationInput,
   context: OutfitGenerationContext,
+  batch?: BatchAlternatives,
 ): string {
   const candidatesByRole: Record<OutfitRole, ReturnType<typeof candidateForPrompt>[]> = {
     top: context.candidates.top.map(candidateForPrompt),
@@ -113,6 +119,10 @@ export function buildOutfitGenerationUserPrompt(
   return JSON.stringify({
     task: "Generate closet-only outfit recommendations.",
     requestedOutfitCount: input.count,
+    ...(batch ? { batchAlternatives: {
+      ...batch,
+      instruction: "Draft the indicated number of complete outfits for ranking. Build options around different listed bottomItemIds before repeating a bottom when they suit the brief. Same-looking trousers under different IDs do not make an alternative. Keep the requested garments, dress code and conditions; repeat a suitable bottom when those constraints require it.",
+    } } : {}),
     userQuery: input.query,
     occasion: input.occasion ?? context.retrievalPlan.intent.occasion ?? null,
     formality: input.formality,
@@ -142,6 +152,9 @@ export function buildOutfitGenerationUserPrompt(
       avoidItemIds: input.avoidItemIds,
       avoidTerms: input.avoidTerms,
     },
+    ...(context.diagnostics.laundryNotices?.needsWarmReplacement
+      ? { unavailableRequestedItems: context.diagnostics.laundryNotices.namedInLaundry }
+      : {}),
     candidatesByRole,
     outputSchema: {
       stylistMessage: "string, the short chat reply for the first outfit",
