@@ -79,6 +79,25 @@ describe("wardrobe retrieval ranking helpers", () => {
     expect(categoryBucket("DRESS PENNY LOAFERS")).toBe("footwear");
   });
 
+  it.each([
+    { name: "White Heavyweight Tee", category: "top", stored: 1, expected: 1 },
+    { name: "Brown Suede Trucker Jacket", category: "outerwear", stored: 3, expected: 3 },
+    { name: "Navy Long Wool Coat", category: "outerwear", stored: 5, expected: 5 },
+    { name: "White Heavyweight Tee", category: "top", stored: 2, raw: "heavy", expected: 5 },
+    { name: "White Heavyweight Tee", category: "top", expected: 2 },
+    { name: "Brown Suede Trucker Jacket", category: "outerwear", expected: 3 },
+    { name: "Fleece-lined Trucker Jacket", category: "outerwear", expected: 5 },
+    { name: "Black Down Puffer", category: "outerwear", stored: 22, expected: 5 },
+  ])("retrieves wardrobe warmth for $name (stored $stored, raw $raw)", (row) => {
+    const input = normalizeWardrobeRetrievalInput({ query: "outfit for a cold walk" });
+    const item = {
+      ...readyBase, name: row.name, category: row.category,
+      aiMetadata: { warmth: row.stored }, warmth: "raw" in row ? row.raw : undefined,
+    };
+    const result = buildWardrobeRetrievalResults(input, [{ itemId: "piece", distance: 0.1, item }]);
+    expect(result[0].aiMetadata.warmth).toBe(row.expected);
+  });
+
   it("filters to ready items with embedding vectors", () => {
     const input = normalizeWardrobeRetrievalInput({ query: "black outfit", limit: 10 });
     const results = buildWardrobeRetrievalResults(input, [

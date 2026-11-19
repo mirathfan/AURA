@@ -256,10 +256,10 @@ function inferFormality(item: ClosetItemDocument, category: ClosetItemIntelligen
   return category === "accessory" ? 2 : 2;
 }
 
-function inferWarmth(item: ClosetItemDocument, category: ClosetItemIntelligenceCategory, text: string): number {
+function inferWarmth(item: ClosetItemDocument, category: ClosetItemIntelligenceCategory, text: string, indexedWarmth?: number): number {
   const numeric =
-    toNumberRange(item.warmthScore, 1, 5) ??
-    toNumberRange(item.warmthPreference, 1, 5);
+    (item.warmthScore == null ? null : toNumberRange(item.warmthScore, 1, 5)) ??
+    (item.warmthPreference == null ? null : toNumberRange(item.warmthPreference, 1, 5));
   if (numeric) return numeric;
 
   const warmth = normalizeText(item.warmth);
@@ -267,7 +267,15 @@ function inferWarmth(item: ClosetItemDocument, category: ClosetItemIntelligenceC
   if (warmth === "medium") return 3;
   if (warmth === "light") return 1;
 
-  if (/\b(parka|puffer|wool coat|down|fleece|heavyweight)\b/.test(text)) return 5;
+  // Retrieval has an indexed garment rating. An explicit wardrobe setting takes precedence.
+  if (typeof indexedWarmth === "number" && Number.isInteger(indexedWarmth) && indexedWarmth >= 1 && indexedWarmth <= 5) {
+    return indexedWarmth;
+  }
+  if (/\b(parka|puffer|wool coat|down|fleece)\b/.test(text)) return 5;
+  if (/\bheavyweight\b/.test(text) && !/\b(tee|t ?shirt)\b/.test(text)) return 5;
+  if (category === "outerwear" && /\btrucker\b/.test(text)) {
+    return /\b(insulated|sherpa)\b/.test(text) ? 5 : 3;
+  }
   if (/\b(hoodie|sweater|sweatshirt|cardigan|jacket|coat|flannel)\b/.test(text)) return 4;
   if (/\b(oxford|shirt|denim|jeans|trousers|chinos|leather|loafer|loafers|boot|boots)\b/.test(text)) return 2;
   if (/\b(shorts|linen|tank|sandal|slide|slides)\b/.test(text)) return 1;
@@ -345,13 +353,13 @@ function searchAliases(item: ClosetItemDocument, metadata: Omit<NormalizedCloset
   return uniqueSorted(aliases, 16);
 }
 
-export function normalizeClosetItemMetadata(item: ClosetItemDocument): NormalizedClosetItemMetadata {
+export function normalizeClosetItemMetadata(item: ClosetItemDocument, indexedWarmth?: number): NormalizedClosetItemMetadata {
   const text = normalizeText(GENERATED_TEXT_FIELDS.map((field) => item[field]).filter(Boolean).join(" "));
   const category = normalizeCategory(item);
   const colors = normalizeColors(item);
   const fit = normalizeFit(item.fit, text);
   const formality = inferFormality(item, category, text);
-  const warmth = inferWarmth(item, category, text);
+  const warmth = inferWarmth(item, category, text, indexedWarmth);
   const brand = stringValue(item, ["brand"]);
   const material =
     normalizeText(item.material) ||

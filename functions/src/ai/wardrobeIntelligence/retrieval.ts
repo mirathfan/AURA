@@ -128,7 +128,7 @@ export function scoreFromCosineDistance(distance: number | null | undefined): nu
 }
 
 function metadataForItem(item: ClosetItemDocument): NormalizedClosetItemMetadata {
-  const generated = normalizeClosetItemMetadata(item);
+  const generated = normalizeClosetItemMetadata(item, item.aiMetadata?.warmth);
   const stored = item.aiMetadata && typeof item.aiMetadata === "object"
     ? item.aiMetadata as Partial<NormalizedClosetItemMetadata>
     : {};

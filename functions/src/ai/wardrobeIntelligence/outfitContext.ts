@@ -524,6 +524,10 @@ export function findLaundryNotices(args: WeatherAndStyleBrief & {
 }): OutfitLaundryNotices {
   const required = new Set(args.requiredItemIds);
   const available = new Set(args.availableSubcategories.map((entry) => rotationWords(entry).join(" ")).filter(Boolean));
+  // A specific garment name resolves that kind, even if another dirty item shares it.
+  const namedKinds = new Set(args.laundryItems
+    .filter((item) => wordsNamedIn(args.userText, item.name))
+    .map((item) => rotationWords(item.subcategory).join(" ")));
   const selectedInLaundry: string[] = [];
   const namedInLaundry: string[] = [];
   let needsWarmReplacement = false;
@@ -539,8 +543,8 @@ export function findLaundryNotices(args: WeatherAndStyleBrief & {
     }
     const namedExactly = wordsNamedIn(args.userText, item.name);
     // "something with jeans" only needs explaining when no clean jeans exist.
-    const namedByKind = wordsNamedIn(args.userText, item.subcategory) &&
-      !available.has(rotationWords(item.subcategory).join(" "));
+    const kind = rotationWords(item.subcategory).join(" ");
+    const namedByKind = !namedKinds.has(kind) && !available.has(kind) && wordsNamedIn(args.userText, item.subcategory);
     if (namedExactly || namedByKind) {
       namedInLaundry.push(name);
       if (canonicalizeOutfitRole(item, item.category) === "outerwear" && intentFlags(args).cold) {
