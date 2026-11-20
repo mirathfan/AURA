@@ -33,7 +33,7 @@ const WARMTH_HINTS: Array<{words: string[]; value: number}> = [
   {words: ["spring", "fall", "autumn", "mild"], value: 0.5},
 ];
 
-export type Slot = "top" | "bottom" | "footwear" | "outerwear";
+export type Slot = "top" | "bottom" | "footwear" | "outerwear" | "accessory";
 
 export type OutfitIntentV1 = {
   occasion:
@@ -319,12 +319,13 @@ function normalizeItemColors(item: WardrobeItem): AllowedColor[] {
   return out;
 }
 
-function bucketForItem(item: WardrobeItem): Slot | null {
+function bucketForItem(item: WardrobeItem): Slot | "accessory" | null {
   const category = String(item.category ?? "").trim().toLowerCase();
   if (category === Category.TOP || category === Category.ONE_PIECE) return "top";
   if (category === Category.BOTTOM) return "bottom";
   if (category === Category.FOOTWEAR || category === "shoes") return "footwear";
   if (category === Category.OUTERWEAR) return "outerwear";
+  if (category === Category.ACCESSORY) return "accessory";
   return null;
 }
 
@@ -574,6 +575,7 @@ function assembleOutfits(
   bottomItems: ScoredItem[],
   footwearItems: ScoredItem[],
   outerwearItems: ScoredItem[],
+  accessoryItems: ScoredItem[],
   intent: OutfitIntentV1,
   count: number,
   lockedBySlot?: Partial<Record<Slot, WardrobeItem>>
@@ -609,6 +611,15 @@ function assembleOutfits(
           if (outerwear) {
             chosen = [...base, outerwear];
             bonus += 0.03;
+          }
+        }
+
+        if (intent.niceToHave.includes("accessory") && accessoryItems.length > 0) {
+          const usedIds = new Set(chosen.map((value) => value.item.id));
+          const accessory = accessoryItems.find((candidate) => !usedIds.has(candidate.item.id));
+          if (accessory) {
+            chosen = [...chosen, accessory];
+            bonus += 0.01;
           }
         }
 
@@ -780,12 +791,14 @@ export function generateOutfitCandidates(
   const bottomBucket = finalItems.filter((item) => bucketForItem(item) === "bottom");
   const footwearBucket = finalItems.filter((item) => bucketForItem(item) === "footwear");
   const outerwearBucket = finalItems.filter((item) => bucketForItem(item) === "outerwear");
+  const accessoryBucket = finalItems.filter((item) => bucketForItem(item) === "accessory");
 
   const slotCounts = {
     top: topBucket.length,
     bottom: bottomBucket.length,
     footwear: footwearBucket.length,
     outerwear: outerwearBucket.length,
+    accessory: accessoryBucket.length,
   };
 
   if (topBucket.length === 0 || bottomBucket.length === 0 || footwearBucket.length === 0) {
@@ -796,12 +809,14 @@ export function generateOutfitCandidates(
   const scoredBottom = selectTopCandidates(bottomBucket, "bottom", constrained.intent, 25);
   const scoredFootwear = selectTopCandidates(footwearBucket, "footwear", constrained.intent, 25);
   const scoredOuterwear = selectTopCandidates(outerwearBucket, "outerwear", constrained.intent, 5);
+  const scoredAccessories = selectTopCandidates(accessoryBucket, "accessory", constrained.intent, 5);
 
   let outfits = assembleOutfits(
     scoredTop,
     scoredBottom,
     scoredFootwear,
     scoredOuterwear,
+    scoredAccessories,
     constrained.intent,
     count,
     options?.lockedItemsBySlot

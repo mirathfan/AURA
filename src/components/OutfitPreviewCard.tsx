@@ -1,8 +1,9 @@
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { getItemImageUrl } from "../../src/lib/itemImage";
 import { ClothingItem } from "../../src/types/ClothingItem";
+import FlatLayCanvas from "./outfit/FlatLayCanvas";
 
 type SlotName = "outerwear" | "top" | "bottom" | "shoes";
 
@@ -13,34 +14,25 @@ type Props = {
   onWhy: () => void;
 };
 
-function slotTitle(item: ClothingItem | null, fallback: string) {
-  if (!item) return "+ Add";
-  return item.name || item.subCategory || item.category || fallback;
-}
-
-function SlotTile({ label, item }: { label: string; item: ClothingItem | null }) {
-  const uri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
-  return (
-    <View style={styles.tile}>
-      {uri ? <Image source={{ uri }} style={styles.image} resizeMode="contain" /> : <View style={styles.placeholder} />}
-      <Text style={styles.slotLabel}>{label}</Text>
-      <Text style={styles.slotValue} numberOfLines={1}>
-        {slotTitle(item, label)}
-      </Text>
-    </View>
-  );
-}
-
 export default function OutfitPreviewCard({ slots, title, onUse, onWhy }: Props) {
+  const outfitItems = (
+    Object.entries(slots) as [SlotName, ClothingItem | null][]
+  ).flatMap(([slotKey, item]) =>
+    item == null
+      ? []
+      : [
+          {
+            id: item.id,
+            category: slotKey,
+            imageUrl: getItemImageUrl(item, { variant: "thumb" }) || null,
+          },
+        ]
+  );
+
   return (
     <View style={styles.card}>
       <Text style={styles.title}>{title}</Text>
-      <View style={styles.grid}>
-        <SlotTile label="Outerwear" item={slots.outerwear} />
-        <SlotTile label="Top" item={slots.top} />
-        <SlotTile label="Bottom" item={slots.bottom} />
-        <SlotTile label="Shoes" item={slots.shoes} />
-      </View>
+      <FlatLayCanvas items={outfitItems} />
       <View style={styles.actions}>
         <Pressable style={styles.primaryBtn} onPress={onUse}>
           <Text style={styles.primaryBtnText}>Use this outfit</Text>
@@ -65,41 +57,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "800",
     marginBottom: 10,
-  },
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
-  tile: {
-    width: "47%",
-    borderWidth: 1,
-    borderColor: "#ececec",
-    borderRadius: 12,
-    padding: 8,
-    backgroundColor: "#fafafa",
-  },
-  image: {
-    width: "100%",
-    height: 64,
-  },
-  placeholder: {
-    width: "100%",
-    height: 64,
-    borderRadius: 8,
-    backgroundColor: "#f0f0f0",
-  },
-  slotLabel: {
-    marginTop: 6,
-    fontSize: 11,
-    color: "#666",
-    fontWeight: "700",
-  },
-  slotValue: {
-    marginTop: 2,
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#111",
   },
   actions: {
     marginTop: 12,
