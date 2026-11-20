@@ -2,35 +2,31 @@
 
 **AURA: AI Personal Stylist** is a KASAT Labs mobile application that helps users digitize their wardrobe and receive outfit recommendations based on their clothing inventory, occasion, and context.
 
-## Performance Metrics
+[Screenshots](#demo) · [Architecture](docs/outfit-planning-architecture.md) · [Benchmarks](benchmarks/README.md) · [Setup](#getting-started)
 
-- Real-time recommendation engine: ~1.2ms p50 ranking latency across 1000+ outfit combinations
-- AURA AI assistant response latency: ~0.9s end-to-end
-- Item creation time reduced by ~6× through automated image ingestion and attribute extraction
-- Feature extraction pipeline generates 34 structured garment attributes per item
-- Scales to ~800-item datasets with stable, near-constant inference performance
-
-The app combines **computer vision, mobile development, and AI intent parsing** to create a personal styling assistant that suggests outfits directly from a user's closet.
-
-A KASAT product.
-
----
+The app combines mobile engineering, computer vision, wardrobe retrieval, and structured outfit generation. A KASAT product.
 
 ## Demo
 
-### Screenshots / Demo
+| Digital wardrobe | AI styling assistant | Outfit calendar |
+| --- | --- | --- |
+| <img src="website/public/assets/closet-grid-screen-public.webp" alt="AURA wardrobe with searchable clothing cards" width="230"> | <img src="website/public/assets/aura-chat-screen-public.webp" alt="AURA styling conversation and outfit suggestions" width="230"> | <img src="website/public/assets/calendar-screen-public.webp" alt="AURA calendar for planning saved outfits" width="230"> |
 
-Screenshots can be added under `docs/screenshots/` when release images are ready.
+These are existing public product screenshots from this repository's website assets. They illustrate the app experience; they are not evidence of a new test run.
 
-Example flow:
+Typical flow: add clothing photos, review garment details, browse the wardrobe, request an outfit, and save a look to the calendar. Native background removal requires a supported device/build.
 
-1. User adds clothing items by taking photos  
-2. Background is automatically removed using iOS Vision  
-3. Items are stored in a digital wardrobe  
-4. User can ask the AI for outfit suggestions  
-5. Suggested outfits are logged into a calendar planner  
+## Performance evidence
 
----
+The [saved benchmark report](benchmarks/results/benchmark-report.md) and [JSON results](benchmarks/results/benchmark-results.json) record a **May 25, 2026** local run on an **Apple M4**, macOS arm64, **Node v24.12.0**. Deterministic synthetic wardrobes contain 50–1,000 items. Firebase, Expo, React Native, and network dependencies are mocked.
+
+| Operation at 1,000 wardrobe items | Recorded p50 | Measurement scope |
+| --- | ---: | --- |
+| Server outfit candidate generation | 925.385 ms | Local function execution; 1 warmup, 2 measured runs |
+| Client fallback outfit generation | 1,158.724 ms | Local function execution; 1 warmup, 2 measured runs |
+| Wardrobe gap suggestions | 1.133 ms | Local function execution; 10 warmups, 80 measured runs |
+
+The small generation sample counts limit interpretation of percentiles. These historical microbenchmarks do **not** establish deployed AI response latency, native rendering performance, or an item-creation speedup, and may not describe the current implementation. See the [runner](benchmarks/run-benchmarks.cjs), [methodology and reproduction commands](benchmarks/README.md), and [image-pipeline audit](benchmarks/results/image-pipeline-audit.md).
 
 ## Features
 
@@ -70,7 +66,7 @@ sequenceDiagram
 - On-device segmentation keeps photos private and reduces server cost.
 - Firebase rules enforce user-scoped access (`users/{uid}/...`).
 - Cloud Function converts free-text to structured intent for deterministic outfit logic.
-- 
+
 ### Clothing Image Processing
 - Background removal using **Apple Vision Framework**
 - Clean segmentation of clothing items
@@ -301,7 +297,6 @@ Cloud Functions run on Node.js 22.
 - Outfit planner calendar
 
 ### Future Features
-- Automatic clothing metadata extraction
 - Brand detection
 - Weather-aware outfit suggestions
 - Style learning AI
