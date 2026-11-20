@@ -8,6 +8,7 @@ export { askAura } from "./askAura";
 export { askAuraStream } from "./askAuraStream";
 export { ingestItemFromPhotos } from "./ingestItemFromPhotos";
 export { generateCleanedProductImages } from "./generateCleanedProductImages";
+export { onSavedLookStyleEvent, onWornOutfitStyleEvent } from "./styleEventTriggers";
 
 if (!getApps().length) {
   initializeApp();

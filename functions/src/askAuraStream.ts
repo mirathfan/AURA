@@ -7,6 +7,11 @@ import OpenAI from "openai";
 import { AURA_INSTRUCTIONS, AURA_STREAM_INSTRUCTIONS } from "./shared/auraPrompt";
 import { buildAuraContext } from "./shared/buildAuraContext";
 import { loadAuraUserProfile } from "./shared/loadAuraUserProfile";
+import {
+  buildCompactMemorySummary,
+  loadAssistantProfile,
+  loadBehaviorProfile,
+} from "./shared/assistantMemory";
 
 const db = getFirestore();
 
@@ -185,7 +190,13 @@ export const askAuraStream = onRequest(
         return;
       }
 
-      const itemsSnap = await db.collection("users").doc(uid).collection("items").get();
+      const [itemsSnap, userProfile, assistantProfile, behaviorProfile] = await Promise.all([
+        db.collection("users").doc(uid).collection("items").get(),
+        loadAuraUserProfile(uid),
+        loadAssistantProfile(db, uid),
+        loadBehaviorProfile(db, uid),
+      ]);
+
       const items = itemsSnap.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
@@ -202,7 +213,8 @@ export const askAuraStream = onRequest(
         footwearAvailable: auraContext.wardrobeDebug?.footwearAvailable ?? [],
         excludedFootwear: auraContext.wardrobeDebug?.excludedFootwear ?? [],
       });
-      const userProfile = await loadAuraUserProfile(uid);
+
+      const memorySummary = buildCompactMemorySummary(assistantProfile, behaviorProfile);
 
       const client = new OpenAI({
         apiKey: process.env.OPENAI_API_KEY,
@@ -210,6 +222,7 @@ export const askAuraStream = onRequest(
 
       const requestText =
         `User profile:\n${JSON.stringify(userProfile, null, 2)}\n\n` +
+        `${memorySummary}\n\n` +
         `Aura context:\n${JSON.stringify(auraContext, null, 2)}\n\n` +
         `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
         `User request:\n${userMessage}`;

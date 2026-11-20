@@ -6,6 +6,11 @@ import { getFirestore } from "firebase-admin/firestore";
 import { AURA_INSTRUCTIONS } from "./shared/auraPrompt";
 import { buildAuraContext } from "./shared/buildAuraContext";
 import { loadAuraUserProfile } from "./shared/loadAuraUserProfile";
+import {
+  buildCompactMemorySummary,
+  loadAssistantProfile,
+  loadBehaviorProfile,
+} from "./shared/assistantMemory";
 
 const db = getFirestore();
 
@@ -146,7 +151,13 @@ export const askAura = onCall(
       throw new HttpsError("invalid-argument", "Message is required.");
     }
 
-    const itemsSnap = await db.collection("users").doc(uid).collection("items").get();
+    const [itemsSnap, userProfile, assistantProfile, behaviorProfile] = await Promise.all([
+      db.collection("users").doc(uid).collection("items").get(),
+      loadAuraUserProfile(uid),
+      loadAssistantProfile(db, uid),
+      loadBehaviorProfile(db, uid),
+    ]);
+
     const items = itemsSnap.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
@@ -163,7 +174,8 @@ export const askAura = onCall(
       footwearAvailable: auraContext.wardrobeDebug?.footwearAvailable ?? [],
       excludedFootwear: auraContext.wardrobeDebug?.excludedFootwear ?? [],
     });
-    const userProfile = await loadAuraUserProfile(uid);
+
+    const memorySummary = buildCompactMemorySummary(assistantProfile, behaviorProfile);
 
     try {
       const client = new OpenAI({
@@ -183,6 +195,7 @@ export const askAura = onCall(
                 type: "input_text",
                 text:
                   `User profile:\n${JSON.stringify(userProfile, null, 2)}\n\n` +
+                  `${memorySummary}\n\n` +
                   `Aura context:\n${JSON.stringify(auraContext, null, 2)}\n\n` +
                   `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
                   `User request:\n${userMessage}`,
