@@ -1,5 +1,6 @@
 import {
   draftFromProductLinkPreview,
+  candidateFromProductLinkDraft,
   previewFromSafeHmClientFallback,
 } from "./productLinkClosetImport";
 
@@ -43,6 +44,22 @@ describe("mobile product-link compatibility", () => {
     };
     expect(previewFromSafeHmClientFallback(sourceUrl, unsafePreview)).toBeNull();
     expect(previewFromSafeHmClientFallback("https://example.com/product/1", unsafePreview)).toBeNull();
+  });
+
+  test("a classified bottom survives conflicting hints and a user category edit survives the save", () => {
+    const preview = {
+      candidate: {
+        candidateId: "cargo", imageUrls: [], title: "Pocket Cargo Pants", category: "top",
+        sourceType: "link" as const, status: "needs_review" as const,
+      },
+      metadata: {
+        sourceUrl: "https://kotn.com/products/cargo", domain: "kotn.com", category: "bottom", categoryHints: ["top"],
+      },
+    };
+    const draft = draftFromProductLinkPreview(preview);
+    expect(draft.category).toBe("bottom");
+    expect(candidateFromProductLinkDraft({ preview, draft }).category).toBe("bottom");
+    expect(candidateFromProductLinkDraft({ preview, draft: { ...draft, category: "outerwear" } }).category).toBe("outerwear");
   });
 
   test("released preview fields still produce the same editable draft", () => {

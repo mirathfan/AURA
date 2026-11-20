@@ -1,3 +1,6 @@
+import { parseFootwearSwap } from "./footwearSwap";
+import { normalizeOutfitRoleAlias } from "./outfitRole";
+import { isWorkOccasion } from "./outfitSignals";
 import type { WardrobeRetrievalFormality } from "./retrievalTypes";
 import type { OutfitRole } from "./outfitTypes";
 import type { FeedbackType } from "./styleMemoryTypes";
@@ -169,7 +172,7 @@ function normalizedFormality(value: unknown, text: string): WardrobeRetrievalFor
     return explicit;
   }
   if (/\b(black tie|wedding|gala|formal)\b/.test(text)) return "formal";
-  if (/\b(office|work|interview|business|professional|meeting|corporate|date|dinner|night out)\b/.test(text)) {
+  if (isWorkOccasion(text) || /\b(date|dinner|night out)\b/.test(text)) {
     return "smart_casual";
   }
   if (/\b(casual|streetwear|street|summer|beach|vacation|resort|relaxed)\b/.test(text)) return "casual";
@@ -179,7 +182,7 @@ function normalizedFormality(value: unknown, text: string): WardrobeRetrievalFor
 function inferOccasion(request: AuraStylingAgentRequest, text: string): string | undefined {
   const explicit = cleanText(request.occasion);
   if (explicit) return explicit;
-  if (/\b(office|work|interview|business|professional|meeting|corporate|workwear)\b/.test(text)) return "office";
+  if (isWorkOccasion(text)) return "office";
   if (/\b(date|date night|dinner|night out|evening|restaurant)\b/.test(text)) return "dinner";
   if (/\b(streetwear|street)\b/.test(text)) return "streetwear";
   if (/\b(summer|beach|vacation|resort|pool)\b/.test(text)) return "vacation";
@@ -191,8 +194,8 @@ function inferWeather(request: AuraStylingAgentRequest, text: string): string | 
   const explicit = cleanText(request.weather);
   if (explicit) return explicit;
   if (/\b(rain|rainy|storm|wet|drizzle)\b/.test(text)) return "rain";
-  if (/\b(summer|hot|warm|beach|vacation|resort|pool)\b/.test(text)) return "hot";
-  if (/\b(cold|winter|chilly|snow)\b/.test(text)) return "cold";
+  if (/\b(cold|winter|chilly|freezing|snow)\b/.test(text)) return "cold";
+  if (/\b(summer|hot|warm weather|beach|vacation|resort|pool)\b/.test(text)) return "hot";
   return undefined;
 }
 
@@ -221,10 +224,10 @@ function inferRequiredCategories(request: AuraStylingAgentRequest, text: string)
 function styleHints(text: string): string[] {
   const hints: string[] = [];
   if (/\b(streetwear|street|sneaker|hoodie|cargo|graphic)\b/.test(text)) hints.push("streetwear");
-  if (/\b(office|work|professional|meeting)\b/.test(text)) hints.push("polished", "professional");
+  if (isWorkOccasion(text)) hints.push("polished", "professional");
   if (/\b(date|dinner|night out)\b/.test(text)) hints.push("elevated", "date night");
   if (/\b(minimal|clean|neutral)\b/.test(text)) hints.push("minimal", "clean");
-  if (/\b(summer|beach|hot|warm)\b/.test(text)) hints.push("warm weather", "breathable");
+  if (/\b(summer|beach|hot|warm weather)\b/.test(text)) hints.push("warm weather", "breathable");
   if (/\b(not too formal|less formal|more casual|dress down)\b/.test(text)) hints.push("more casual", "not too formal");
   if (/\b(more formal|dressier|sharper|polished)\b/.test(text)) hints.push("more formal", "polished");
   return [...new Set(hints)];
@@ -255,31 +258,52 @@ function previousItems(previousOutfit: unknown): Record<string, unknown>[] {
     : [];
 }
 
-function avoidItemIdsForRefinement(request: AuraStylingAgentRequest, text: string): string[] {
-  const items = previousItems(request.previousOutfit);
-  if (!items.length) return [];
-  const avoidRoles = (Object.entries(ROLE_WORDS) as [OutfitRole, RegExp][])
-    .filter(([, pattern]) => pattern.test(text) && /\b(not those|not these|different|swap|change|avoid|don'?t use|do not use|no)\b/.test(text))
-    .map(([role]) => role);
-  if (!avoidRoles.length && /\b(different|try another|try again|not that|not this|not those|not these|swap|change|don'?t use that|do not use that)\b/.test(text)) {
-    return items.map((item) => cleanText(item.itemId)).filter(Boolean);
-  }
-  return items
-    .filter((item) => avoidRoles.includes(normalizedText(item.role ?? item.allowedRole ?? item.category) as OutfitRole))
-    .map((item) => cleanText(item.itemId))
-    .filter(Boolean);
-}
+// An instruction only governs roles in its own clause. In particular a later
+// "swap" must not undo the preceding "keep", even without a comma between them.
+const KEEP_VERBS = "do not (?:change|swap|replace)|don['’]?t (?:change|swap|replace)|keep|retain|preserve|stick with|same";
+const EXCLUDE_VERBS = "don['’]?t use|do not use|not those|not these|not with|avoid|without|no";
+const SWAP_VERBS = "swap(?: out)?|switch(?: out)?|replace|change|trade|different";
+const EDIT_VERBS = new RegExp(`\\b(${KEEP_VERBS}|${EXCLUDE_VERBS}|${SWAP_VERBS})\\b`, "g");
+const KEEP_ACTION = new RegExp(`^(?:${KEEP_VERBS})$`);
+const EXCLUDE_ACTION = new RegExp(`^(?:${EXCLUDE_VERBS})$`);
 
-function inferAvoidTerms(request: AuraStylingAgentRequest, text: string): string[] {
-  const explicit = stringArray((request as { avoidTerms?: unknown }).avoidTerms);
-  const terms: string[] = [...explicit];
-  const negativeScope = /\b(no|avoid|don'?t use|do not use|without|not with)\b/.test(text);
-  if (negativeScope) {
-    for (const [label, pattern] of Object.entries(AVOID_TERM_PATTERNS)) {
-      if (pattern.test(text)) terms.push(label);
+function refinementEdits(request: AuraStylingAgentRequest, text: string) {
+  const items = previousItems(request.previousOutfit);
+  const keep = new Set<string>();
+  const avoid = new Set<string>();
+  const avoidTerms = stringArray((request as { avoidTerms?: unknown }).avoidTerms);
+  const clauses = text.split(EDIT_VERBS);
+  const footwearSwap = parseFootwearSwap(text);
+  if (footwearSwap) {
+    for (const item of items) {
+      const role = normalizeOutfitRoleAlias(item.role ?? item.allowedRole ?? item.category);
+      const id = cleanText(item.itemId);
+      if (role === "footwear") avoid.add(id);
+      else if (footwearSwap.onlyChange && role !== "unknown") keep.add(id);
     }
   }
-  return unique(terms, 12);
+  let hasRoleInstruction = Boolean(footwearSwap);
+  for (let index = 1; index < clauses.length; index += 2) {
+    const action = clauses[index];
+    const object = clauses[index + 1].split(/[.!?;]|\b(?:but|with|for|to|instead of)\b/)[0];
+    const roles = (Object.entries(ROLE_WORDS) as [OutfitRole, RegExp][])
+      .filter(([, pattern]) => pattern.test(object)).map(([role]) => role);
+    if (roles.length) hasRoleInstruction = true;
+    const selected = KEEP_ACTION.test(action) ? keep : avoid;
+    for (const item of items) {
+      const role = normalizeOutfitRoleAlias(item.role ?? item.allowedRole ?? item.category);
+      if (role !== "unknown" && roles.includes(role)) selected.add(cleanText(item.itemId));
+    }
+    if (EXCLUDE_ACTION.test(action)) {
+      for (const [term, pattern] of Object.entries(AVOID_TERM_PATTERNS)) {
+        if (pattern.test(object)) avoidTerms.push(term);
+      }
+    }
+  }
+  if (!hasRoleInstruction && /\b(different|try another|try again|not that|not this|not those|not these|swap|change|don'?t use that|do not use that)\b/.test(text)) {
+    for (const item of items) avoid.add(cleanText(item.itemId));
+  }
+  return { keep: [...keep], avoid: [...avoid], avoidTerms: unique(avoidTerms, 12) };
 }
 
 function hasConversationReference(request: AuraStylingAgentRequest): boolean {
@@ -309,7 +333,7 @@ function classifyMode(request: AuraStylingAgentRequest, text: string): {
   if (/\b(why|explain|rationale|break down|breakdown|score)\b/.test(text)) {
     return { mode: "explain_outfit", confidence: 0.86, reason: "explanation language" };
   }
-  if (/\b(refine|less formal|more casual|more formal|too formal|too casual|not too formal|more streetwear|less streetwear|more color|less color|different|try another|try again|swap|change|not those|not these|more like|like that|like this|second one|first one|third one)\b/.test(text)) {
+  if (/\b(refine|less formal|more casual|more formal|too formal|too casual|not too formal|more streetwear|less streetwear|more color|less color|different|try another|try again|replace|switch|retain|preserve|swap|change|not those|not these|more like|like that|like this|second one|first one|third one)\b/.test(text)) {
     return { mode: "refine_outfit", confidence: 0.9, reason: "refinement language" };
   }
   if (hasReference && /\b(more|another|again|this|that|those|same|similar)\b/.test(text)) {
@@ -322,7 +346,7 @@ function classifyMode(request: AuraStylingAgentRequest, text: string): {
       reason: "styling request anchored to selected closet items",
     };
   }
-  if (/\b(outfits?|wear|looks?|style|fits?|dress me)\b/.test(text)) {
+  if (isWorkOccasion(text) || /\b(outfits?|wear|looks?|style|fits?|dress me)\b/.test(text)) {
     return { mode: "generate_outfit", confidence: 0.88, reason: "outfit generation language" };
   }
   return { mode: "unknown", confidence: 0.35, reason: "no supported styling intent matched" };
@@ -333,7 +357,7 @@ export function classifyAuraStylingAgentIntent(request: AuraStylingAgentRequest)
   const text = normalizedText(query);
   const mode = classifyMode(request, text);
   const formality = normalizedFormality(request.formality, text);
-  const occasion = inferOccasion(request, text);
+  const occasion = inferOccasion(request, text) || (mode.mode === "refine_outfit" ? cleanText(request.previousOutfit?.occasion) : "");
   const weather = inferWeather(request, text);
   const colors = inferColors(request, text);
   const requiredCategories = inferRequiredCategories(request, text);
@@ -341,10 +365,10 @@ export function classifyAuraStylingAgentIntent(request: AuraStylingAgentRequest)
   const hasCategoryColorConstraint = requiredCategories.some((role) => ROLE_WORDS[role].test(text));
   const allRequiredColors = requiredColors.length ? requiredColors : hasCategoryColorConstraint ? colors : [];
   const feedbackType = inferFeedbackType(request, text);
-  const avoidTerms = inferAvoidTerms(request, text);
-  const avoidItemIds = mode.mode === "refine_outfit" || avoidTerms.length
-    ? uniqueExact(avoidItemIdsForRefinement(request, text), 20)
-    : [];
+  const edits = refinementEdits(request, text);
+  const refining = mode.mode === "refine_outfit";
+  const avoidTerms = edits.avoidTerms;
+  const avoidItemIds = refining || avoidTerms.length ? uniqueExact(edits.avoid, 20) : [];
   return {
     mode: mode.mode,
     query,
@@ -364,7 +388,7 @@ export function classifyAuraStylingAgentIntent(request: AuraStylingAgentRequest)
       avoidTerms,
       ...(mode.mode === "refine_outfit" ? { refinementInstruction: query } : {}),
       ...(feedbackType ? { feedbackType } : {}),
-      selectedItemIds: uniqueExact(stringArray(request.selectedItemIds), 20),
+      selectedItemIds: uniqueExact([...stringArray(request.selectedItemIds), ...(refining ? edits.keep : [])], 20),
     },
   };
 }

@@ -353,6 +353,81 @@ describe("runAuraStylingAgentGraph", () => {
     expect(seenRequiredIds[0]).toEqual(["pants"]);
   });
 
+  it.each([
+    ["incomplete prose", "Pair the tee and cargos with your Chelsea boots."],
+    ["incorrect outerwear", "Keep your cargos and pull on the Camel Wool Overcoat."],
+    ["a repaired card without model prose", undefined],
+  ])("names the final card's warm layer after a cold-walk edit with %s", async (_case, stylistMessage) => {
+    const closet = context();
+    const tee = candidate("tee", "top", "Black Boxy Tee");
+    const cargos = candidate("cargos", "bottom", "Black Wide Cargos");
+    const boots = candidate("boots", "footwear", "Brown Leather Chelsea Boots");
+    const puffer = candidate("puffer", "outerwear", "Black Down Puffer");
+    const coat = candidate("coat", "outerwear", "Camel Wool Overcoat");
+    closet.candidates = {...closet.candidates, top: [tee], bottom: [cargos], footwear: [boots], outerwear: [coat, puffer]};
+    const edited = {...outfit(), occasion: "dinner", items: [cargos, tee, boots, puffer]};
+    const harness = deps({
+      retrieveOutfitContext: async () => closet,
+      loadUserPreferences: async () => null,
+      generateOutfits: async () => ({
+        outfits: [edited], stylistMessage, validationErrors: [], validationWarnings: [], repaired: !stylistMessage,
+      }),
+    });
+
+    const response = await runAuraStylingAgentGraph("uid", {
+      query: "I like the second one. Keep the pants, swap the shoes, and make it work for a cold walk.",
+      previousOutfit: {occasion: "dinner", items: [tee, cargos, candidate("derbies", "footwear", "Black Derbies")]},
+      useStyleMemory: false,
+    }, harness.deps);
+
+    expect(response.messageSource).toBe("stylist");
+    for (const item of edited.items) expect(response.message).toContain(item.name);
+    expect(response.message).not.toContain(coat.name);
+    expect(response.outfits?.[0].items.map((item) => item.itemId)).toEqual(["cargos", "tee", "boots", "puffer"]);
+  });
+
+  it("explains that boots are unavailable when another shoe exists", async () => {
+    const harness = deps({ retrieveOutfitContext: async () => context() });
+    const response = await runAuraStylingAgentGraph("uid", {
+      query: "Swap the sneakers for boots.",
+      previousOutfit: { occasion: "dinner", items: [
+        { itemId: "shirt", role: "top" }, { itemId: "pants", role: "bottom" },
+        { itemId: "sneakers", role: "footwear" },
+      ] },
+      useStyleMemory: false,
+    }, harness.deps);
+    expect(response.outfits ?? []).toHaveLength(0);
+    expect(response.message).toMatch(/couldn't find.*boots/);
+    expect(harness.calls.some((call) => call.startsWith("generate:"))).toBe(false);
+  });
+
+  it("explains both unavailable shoes and warmth without producing a replacement card", async () => {
+    const harness = deps({retrieveOutfitContext: async () => context()});
+    const response = await runAuraStylingAgentGraph("uid", {
+      query: "Keep the trousers, swap the shoes, and make it work for a cold walk.",
+      previousOutfit: {occasion: "dinner", items: [{itemId: "loafers", role: "footwear"}]},
+      useStyleMemory: false,
+    }, harness.deps);
+    expect(response.message).toMatch(/another eligible pair of shoes/);
+    expect(response.message).toMatch(/warm layer/);
+    expect(response.outfits?.length ?? 0).toBe(0);
+  });
+
+  it("switches a new office brief without carrying the dinner walk into tomorrow", async () => {
+    const harness = deps({generateOutfits: async ({input}) => {
+      expect(input.query).toBe("Actually, tomorrow I need something for the office.");
+      expect(input.occasion).toBe("office");
+      expect(input.weather).toBeUndefined();
+      return {outfits: [outfit()], validationErrors: [], validationWarnings: [], repaired: false};
+    }});
+    await runAuraStylingAgentGraph("uid", {
+      mode: "refine_outfit", query: "Actually, tomorrow I need something for the office.",
+      previousOutfit: {occasion: "dinner", items: []},
+      conversationContext: {recentTurns: [{role: "user", text: "make it work for a cold walk"}],
+        priorOutfitRefs: [], selectedItemIds: [], feedbackSignals: []},
+    }, harness.deps);
+  });
+
   it("returns a graceful no-outfit response when selected item anchors are unavailable", async () => {
     const harness = deps({
       retrieveOutfitContext: async () => {
@@ -408,6 +483,7 @@ describe("runAuraStylingAgentGraph", () => {
           { role: "assistant", text: "Rendered outfit-card context for follow-ups." },
         ],
         priorOutfitRefs: [
+          { outfitId: "outfit-2", index: 2, title: "Older version", itemIds: ["stale-trousers"] },
           { outfitId: "outfit-1", index: 1, title: "First", itemIds: ["shirt"] },
           { outfitId: "outfit-2", index: 2, title: "Second", occasion: "dinner", formality: "smart_casual", itemIds: ["pants", "loafers"] },
         ],
@@ -415,7 +491,7 @@ describe("runAuraStylingAgentGraph", () => {
     }, harness.deps);
 
     expect(generatedQueries[0]).toContain("make outfit 2 more casual");
-    expect(generatedQueries[0]).toContain("Selected outfit");
+    expect(generatedQueries[0]).toContain("Selected outfit: outfit 2; Second");
     expect(generatedQueries[0]).toContain("outfit 2");
     expect(generatedQueries[0]).toContain("negative feedback: too formal");
   });

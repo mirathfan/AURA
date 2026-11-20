@@ -1,8 +1,13 @@
 import {
   ProductLinkError,
   extractAmazonLinkData,
+  extractColorFromProduct,
+  inferBrand,
+  inferClosetCategoryFromProduct,
   extractProductMetadataFromHtml,
+  extractProductImagesFromHtml,
   looksLikeBlockedProductPage,
+  isProductRedirectToStorefront,
   parseZaraProductDetailsResponse,
   productPageHttpError,
   validateProductUrl,
@@ -14,7 +19,7 @@ import {
   selectBestProductTitle,
   extractStructuredData,
 } from "./productExtractionPipeline";
-import { filterReachableProductImageUrls } from "./auraCandidatePreview";
+import { filterReachableProductImageUrls, productCategoryHintsFromText } from "./auraCandidatePreview";
 import {
   canUseHmBlockedStorePreviewFallback,
   firstUsableProductImageCandidate,
@@ -35,6 +40,122 @@ function failedFixtureNames(result: { results: { name: string; passed: boolean }
 }
 
 describe("backend-owned product extraction migration", () => {
+  test("classifies a crew neck pullover as a top through both preview and persistence", () => {
+    expect(productCategoryHintsFromText("Accolade Crew Neck Pullover").category).toBe("top");
+    expect(inferClosetCategoryFromProduct({ title: "Accolade Crew Neck Pullover" }).category).toBe("top");
+  });
+  test("retains collaboration identity and does not rebuild a title containing a slash color", () => {
+    const alex = "<meta property=\"og:title\" content=\"J. Press x Alex Mill Rugby Striped Shirt In Cotton\"><meta property=\"product:brand\" content=\"Alex Mill\">";
+    expect(extractProductMetadataFromHtml("https://alexmill.com/products/rugby", alex).title).toContain("J. Press x Alex Mill");
+    const universal = "<script type=\"application/ld+json\">"+JSON.stringify({"@type":"Product",name:"Savvy Fine Knit V Sweater - Cream/Navy Stripes",color:["Cream/Navy Stripes"],brand:{name:"Universal Standard"}})+"</script>";
+    expect(extractProductMetadataFromHtml("https://universalstandard.com/products/savvy", universal)).toMatchObject({title:"Savvy Fine Knit V Sweater - Cream Navy Stripes",color:"Cream/Navy Stripes"});
+  });
+
+  test("uses only the current Shopify product's unambiguous variant color", () => {
+    const page = "https://ayr.com/products/the-distance-pant";
+    const html = (handle: string, colors: string[]) => "<meta property=\"og:title\" content=\"The Distance Pant\"><script>var meta = "+JSON.stringify({product:{handle,variants:colors.map((color,i)=>({id:i+1,public_title:color+" / XS"}))}})+";</script>";
+    expect(extractProductMetadataFromHtml(page,html("the-distance-pant",["Dirt","Dirt"])).color).toBe("Dirt");
+    expect(extractProductMetadataFromHtml(page,html("recommendation",["Dirt"])).color).not.toBe("Dirt");
+    expect(extractProductMetadataFromHtml(page,html("the-distance-pant",["Dirt","Ink"])).color).toBeFalsy();
+    expect(extractProductMetadataFromHtml(page+"?variant=2",html("the-distance-pant",["Dirt","Ink"])).color).toBe("Ink");
+    expect(extractProductMetadataFromHtml(page,html("the-distance-pant",["Charcoal / Charcoal"])).color).toBe("Charcoal");
+  });
+
+  test("reads named colors from retailers' explicit title sections", () => {
+    const everlane="<meta property=\"og:title\" content=\"The Box-Cut Tee in Essential Cotton | Peyote | No Pocket\">";
+    expect(extractProductMetadataFromHtml("https://everlane.com/products/tee",everlane).color).toBe("Peyote");
+    const mumu="<meta property=\"og:title\" content=\"Valley Sweater ~ Arctic Chevron Knit\">";
+    expect(extractProductMetadataFromHtml("https://showmeyourmumu.com/products/sweater",mumu).color).toBe("Arctic Chevron Knit");
+    expect(extractProductMetadataFromHtml("https://example.com/products/sweater",mumu).color).toBeFalsy();
+    const rails="<meta property=\"og:title\" content=\"BRADSHAW SHIRT - KELLY WHITE STRIPE\">";
+    expect(extractProductMetadataFromHtml("https://rails.com/products/bradshaw-shirt-kelly-white-stripe",rails).color).toBe("Kelly White Stripe");
+  });
+
+  test("uses a ProductGroup identity with selected resale variant price and image", () => {
+    const page="https://outerknown.com/products/jeans";
+    const variant={"@type":"Product",name:"Jeans - Outerworn:Denim / 24 / listing-id",brand:{name:"Trove"},color:"Denim",image:"https://outerknown.com/jeans.jpg",offers:{url:page,price:100,priceCurrency:"USD"}};
+    const html="<script type=\"application/ld+json\">"+JSON.stringify({"@type":"ProductGroup",name:"Dune High Rise Slim Fit Jeans",brand:{name:"Outerknown"},hasVariant:[variant]})+"</script>";
+    expect(extractStructuredData(html,page)).toMatchObject({title:"Dune High Rise Slim Fit Jeans",brand:"Outerknown",color:"Denim",priceAmount:100});
+  });
+  test("preserves retailer color names and scopes the Madewell brand alias to its own site", () => {
+    expect(extractColorFromProduct({ title: "Classic Organic Tee - Optical White" }).color).toBe("Optical White");
+    expect(inferBrand({ brand: "MW" }, "www.madewell.com").brand).toBe("Madewell");
+    expect(inferBrand({ brand: "MW" }, "example.com").brand).toBe("MW");
+    expect(selectBestProductTitle([{title:"Classic Organic Tee - Optical White",source:"json_ld"}]).title).toBe("Classic Organic Tee");
+  });
+
+  test("Uniqlo uses the requested color, image and active local price from its product state", () => {
+    const page = "https://www.uniqlo.com/us/en/products/E422992-000/00?colorDisplayCode=09";
+    const black = "https://image.uniqlo.com/422992/item/usgoods_09_422992.jpg";
+    const red = black.replace("_09_", "_16_");
+    const state = {
+      pdp: { product: "E422992-000-00" },
+      entity: { pdpEntity: { "E422992-000-00": { product: {
+        productId: "E422992-000", name: "Crew Neck T-Shirt",
+        colors: [{ displayCode: "09", name: "BLACK" }],
+        images: { main: { "09": { image: black }, "16": { image: red } } },
+        prices: { base: { value: 24.9, currency: { code: "USD" } } },
+      } } } },
+    };
+    const html = `<meta property="og:image" content="${red}"><script>window.__PRELOADED_STATE__ = ${JSON.stringify(state)}</script>`;
+    expect(extractProductMetadataFromHtml(page, html)).toMatchObject({ color: "Black", priceAmount: 24.9, currency: "USD" });
+    expect(extractProductImagesFromHtml(page, html)[0]).toBe(black);
+  });
+
+  test("Foot Locker selected swatch takes precedence over natural drape in the description", () => {
+    const html = "<meta property=\"og:title\" content=\"Nike NSW Tee\"><meta name=\"description\" content=\"Cotton with natural drape.\"><p aria-live=\"polite\">Color Hydrogen Blue/Green is selected</p>";
+    expect(extractProductMetadataFromHtml("https://www.footlocker.com/product/nike/R0606407.html", html).color).toBe("Hydrogen Blue/Green");
+  });
+
+  test("an explicitly checked color wins over generic fabric descriptions", () => {
+    const html = `<meta property="og:title" content="Chalet Lounge Pant">
+      <input name="Color" value="Brown"><input checked name="Color" value="Navy Twill">`;
+    expect(extractProductMetadataFromHtml("https://www.marinelayer.com/products/chalet", html).color).toBe("Navy Twill");
+  });
+
+  test("removing a retailer color suffix leaves a complete garment name", () => {
+    const page = "https://kotn.com/products/womens-pocket-cargo-pants-in-charcoal";
+    const html = "<meta property=\"og:title\" content=\"Women's Pocket Cargo Pants in Charcoal\">";
+    expect(extractProductMetadataFromHtml(page, html)).toMatchObject({ title: "Women's Pocket Cargo Pants", color: "Charcoal" });
+  });
+
+  test("Puma selected swatch wins over the first ProductGroup variant", () => {
+    // Reduced from the live 689340?swatch=02 page: white is selected, black is first.
+    const page = "https://us.puma.com/us/en/pd/ess-no--1-logo-tee-us-men/689340?swatch=02";
+    const white = {
+      "@type": "Product", name: "PUMA Essentials Men's Tee", color: "PUMA White",
+      brand: { name: "PUMA" }, image: "https://images.puma.com/global/689340/02/mod01.png",
+      offers: { url: page, price: 11.99, priceCurrency: "USD" },
+    };
+    const black = {
+      ...white, color: "PUMA Black", image: "https://images.puma.com/global/689340/01/mod01.png",
+      offers: { ...white.offers, url: page.replace("swatch=02", "swatch=01") },
+    };
+    const group = { "@type": "ProductGroup", name: white.name, hasVariant: [black, white] };
+    for (const nodes of [[white, group], [group, white]]) {
+      const html = `<script type="application/ld+json">${JSON.stringify(nodes)}</script>`;
+      const result = extractStructuredData(html, page);
+      expect(result.primaryImage).toBe(white.image);
+      expect(result.color).toBe("PUMA White");
+      expect(result.priceAmount).toBe(11.99);
+    }
+  });
+  test("storefront redirects cannot supply promotional images as product images", () => {
+    const product = new URL("https://www.colorfulstandard.com/products/organic-straight-leg-pants-deep-black-male");
+    expect(isProductRedirectToStorefront(product, new URL("https://colorfulstandard.com/en-us"))).toBe(true);
+    expect(isProductRedirectToStorefront(product, new URL("https://colorfulstandard.com/"))).toBe(true);
+    expect(isProductRedirectToStorefront(product, new URL("https://colorfulstandard.com/en-us/products/organic-straight-leg-pants-deep-black-male"))).toBe(false);
+    expect(isProductRedirectToStorefront(new URL("https://example.com/"), new URL("https://example.com/en-us"))).toBe(false);
+  });
+
+  test("child retailer domains take precedence and lookalike hosts stay generic", () => {
+    expect(normalizeProductUrl("https://oldnavy.gap.com/browse/product.do?pid=6735870120210").retailer).toBe("Old Navy");
+    expect(normalizeProductUrl("https://bananarepublic.gap.com/browse/product.do?pid=11894600120000").retailer).toBe("Banana Republic");
+    expect(normalizeProductUrl("https://www.gap.com/browse/product.do?pid=7962558320001").retailer).toBe("Gap");
+    expect(normalizeProductUrl("https://gap.com.example.org/products/shirt").retailer).toBeNull();
+    expect(normalizeProductUrl("https://notgap.com/products/shirt").retailer).toBeNull();
+    expect(normalizeProductUrl("https://us.puma.com/us/en/pd/tee/689340").retailer).toBe("Puma");
+  });
   test("retailer and generic extraction fixtures remain green", () => {
     const result = runProductExtractionPipelineFixture();
     expect(failedFixtureNames(result)).toEqual([]);
@@ -131,6 +252,27 @@ describe("backend-owned product extraction migration", () => {
     expect(looksLikeBlockedProductPage(
       "<html><head><title>100% Wool Jumper</title></head><body>Product details</body></html>",
     )).toBe(false);
+  });
+
+  test("Amazon uses the selected mobile main image before other image metadata", () => {
+    const selected = "https://m.media-amazon.com/images/I/selected.jpg";
+    const result = extractAmazonLinkData(new URL("https://www.amazon.com/dp/B01KNM3EES"),
+      `<title>Hanes charcoal tee</title><meta property="og:image" content="https://example.com/default.jpg">
+       <h2 class="brand-insights-inline">Top Brand: Hanes <span></span></h2>
+       <span id="inline-twister-expanded-dimension-text-color_name"> Charcoal Heather </span>
+       <img src="https://example.com/advert.jpg"><img id="main-image" data-a-hires="${selected}">`);
+    expect(result.imageUrls[0]).toBe(selected);
+    expect(result.metadata.brand).toBe("Hanes");
+    expect(result.metadata.color).toBe("Charcoal Heather");
+  });
+
+  test("recognizes the Macy's access challenge on an HTTP 200 response", () => {
+    expect(looksLikeBlockedProductPage("<div id='sec-if-cpt-container'></div>")).toBe(true);
+  });
+
+  test("recognizes an Amazon challenge form without rejecting a product mentioning captcha", () => {
+    expect(looksLikeBlockedProductPage("<form method='get' action='/errors_page/validateCaptcha'>")).toBe(true);
+    expect(looksLikeBlockedProductPage("<title>Hanes Tee</title><script src='/captcha.js'></script>")).toBe(false);
   });
 
   test("Amazon accepts price only from structured product data", () => {

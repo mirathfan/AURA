@@ -17,6 +17,7 @@ import {
   auraTypography,
 } from "@/src/components/ui/auraStylePrimitives";
 import { decorateAuraAgentActionForState } from "@/src/lib/auraAgentActions";
+import type { ClothingItem } from "@/src/types/ClothingItem";
 import type {
   AuraAgentOutfit,
   AuraAgentOutfitActionState,
@@ -277,6 +278,7 @@ function SelectedOutfitWhyThisWorks({
 
 export default function AuraAgentMessage({
   colors,
+  itemsById,
   response,
   selectedOutfitId,
   disabled = false,
@@ -286,6 +288,7 @@ export default function AuraAgentMessage({
   onAction,
 }: {
   colors: AppColors;
+  itemsById?: Map<string, ClothingItem>;
   response: AuraAgentResponse;
   selectedOutfitId?: string | null;
   disabled?: boolean;
@@ -340,6 +343,7 @@ export default function AuraAgentMessage({
     <View style={{ alignSelf: "stretch", gap: auraSpacing.md, width: "100%" }}>
       <AuraAgentOutfitCarousel
         colors={colors}
+        itemsById={itemsById}
         outfits={outfits}
         selectedOutfitId={effectiveSelectedOutfitId}
         onSelectedOutfitChange={handleSelectedOutfitChange}

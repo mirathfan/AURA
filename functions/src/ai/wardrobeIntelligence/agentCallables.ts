@@ -148,7 +148,7 @@ export async function handleRunAuraStylingAgent(
 }
 
 export const runAuraStylingAgent = onCall(
-  { secrets: ["OPENAI_API_KEY"], timeoutSeconds: 240 },
+  { secrets: ["OPENAI_API_KEY"], timeoutSeconds: 240, memory: "1GiB", concurrency: 4 },
   tracedHandler(async (request) => {
     const uid = requireAuthUid(request.auth?.uid);
     setLogContext({ uidHash: redactUid(uid) });

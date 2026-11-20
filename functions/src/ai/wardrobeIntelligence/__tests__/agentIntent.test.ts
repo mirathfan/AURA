@@ -109,6 +109,30 @@ describe("classifyAuraStylingAgentIntent", () => {
     expect(intent.reason).toBe("explicit mode");
   });
 
+  it.each([
+    "I like the second one. Keep the pants, swap the shoes, and make it work for a cold walk.",
+    "For option two replace the footwear but retain the trousers for a chilly stroll.",
+    "Option 2: don't change the trousers, switch the boots for a cold walk.",
+  ])("keeps and replaces exact IDs from the referenced dinner card: %s", (query) => {
+    const second = { occasion: "dinner date", items: [
+      { itemId: "Twin_Pants-B", role: "bottom" },
+      { itemId: "Boots-B", role: "footwear" },
+    ] };
+    const intent = classifyAuraStylingAgentIntent({ query, previousOutfit: second });
+    expect(intent.mode).toBe("refine_outfit");
+    expect(intent.constraints.selectedItemIds).toEqual(["Twin_Pants-B"]);
+    expect(intent.constraints.avoidItemIds).toEqual(["Boots-B"]);
+    expect(intent.constraints.occasion).toBe("dinner date");
+    expect(intent.constraints.weather).toBe("cold");
+    expect(intent.constraints.styleHints).not.toContain("professional");
+    const office = classifyAuraStylingAgentIntent({
+      query: "Actually, tomorrow I need something for the office.", previousOutfit: second,
+    });
+    expect(office.mode).toBe("generate_outfit");
+    expect(office.constraints.occasion).toBe("office");
+    expect(office.constraints.selectedItemIds).toEqual([]);
+  });
+
   it("classifies less-formal followups as refinement", () => {
     const intent = classifyAuraStylingAgentIntent({
       query: "make it less formal",

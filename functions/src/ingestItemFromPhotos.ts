@@ -528,9 +528,18 @@ function hashPhotoUrls(urls: string[]): string {
   return createHash("sha1").update(urls.join("|")).digest("hex");
 }
 
+function storageEmulatorOrigin(): string | null {
+  const host = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
+  return process.env.FUNCTIONS_EMULATOR === "true" && host ? `http://${host}` : null;
+}
+
 function extractStoragePathFromUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
+    if (parsed.origin === storageEmulatorOrigin() && !parsed.username && !parsed.password) {
+      const prefix = `/v0/b/${getStorage().bucket().name}/o/`;
+      return parsed.pathname.startsWith(prefix) ? decodeURIComponent(parsed.pathname.slice(prefix.length)) : null;
+    }
     if (parsed.hostname === "firebasestorage.googleapis.com") {
       const marker = "/o/";
       const markerIndex = parsed.pathname.indexOf(marker);
@@ -1248,7 +1257,7 @@ async function uploadImageAndGetUrl(
     if (file.metadata.generation) await removeRetiredUpload(file.bucket.name, file.name, file.metadata.generation);
     throw error;
   }
-  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+  return `${storageEmulatorOrigin() ?? "https://firebasestorage.googleapis.com"}/v0/b/${bucketName}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
 }
 
 async function detectPixelColor(

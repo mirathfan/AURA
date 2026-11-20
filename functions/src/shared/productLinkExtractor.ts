@@ -13,6 +13,8 @@ import {
 import {
   buildProductExtractionDiagnostics,
   extractGenericProductDataSync,
+  currentShopifyProductColor,
+  readProductMetaContent,
   normalizeProductUrl,
   rankGenericProductImages,
   retailerAdapters,
@@ -461,30 +463,7 @@ function decodeHtmlEntities(value: string): string {
 }
 
 function extractMeta(html: string, key: string): string | null {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const patterns = [
-    new RegExp(
-      `<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`,
-      "i",
-    ),
-    new RegExp(
-      `<meta[^>]+name=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`,
-      "i",
-    ),
-    new RegExp(
-      `<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${escaped}["'][^>]*>`,
-      "i",
-    ),
-    new RegExp(
-      `<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${escaped}["'][^>]*>`,
-      "i",
-    ),
-  ];
-  for (const pattern of patterns) {
-    const match = html.match(pattern)?.[1];
-    if (match) return cleanText(decodeHtmlEntities(match), 500);
-  }
-  return null;
+  return cleanText(readProductMetaContent(html, key), 500);
 }
 
 function extractTitle(html: string): string | null {
@@ -904,11 +883,41 @@ function extractSizesFromValues(values: unknown[]) {
   return Array.from(new Set([...found, ...numeric])).slice(0, 16);
 }
 
+function checkedProductColor(html: string) {
+  const values = new Set<string>();
+  for (const match of html.matchAll(/<input\b[^>]*>/gi)) {
+    const input = match[0];
+    if (!/\sname\s*=\s*["'](?:colou?r|options\[colou?r\])["']/i.test(input) ||
+        !/\schecked(?:\s|=|\/?>)/i.test(input)) continue;
+    const color = cleanText(input.match(/\svalue\s*=\s*["']([^"']+)["']/i)?.[1], 120);
+    if (color) values.add(color);
+  }
+  return values.size === 1 ? [...values][0] : null;
+}
+
+function retailerTitleColor(html: string, url: URL) {
+  const title = extractMeta(html, "og:title");
+  if (!title) return null;
+  // These storefronts publish a named color section even when schema.org
+  // and Shopify options contain size only. Do not interpret arbitrary titles.
+  if (/(?:^|\.)everlane\.com$/i.test(url.hostname)) {
+    return cleanText(title.split("|")[1], 120);
+  }
+  if (/(?:^|\.)showmeyourmumu\.com$/i.test(url.hostname)) {
+    return cleanText(title.split(" ~ ")[1], 120);
+  }
+  if (/(?:^|\.)rails\.com$/i.test(url.hostname)) {
+    const color = cleanText(title.split(" - ")[1], 120);
+    return color ? titleCaseColor(color) : null;
+  }
+  return null;
+}
+
 function extractColorFromText(value?: string | null) {
   const text = String(value ?? "").trim();
   if (!text) return null;
   const colorWord =
-    "(?:summit\\s+white|light\\s+bone|dark\\s+heather\\s+grey|dark\\s+heather\\s+gray|heather\\s+grey|heather\\s+gray|light\\s+blue|dark\\s+blue|navy\\s+blue|sky\\s+blue|off\\s+white|sail|cream|ecru|beige|black|white|gray|grey|red|green|blue|yellow|pink|purple|orange|brown|khaki|olive|stone|ivory|silver|gold|tan|navy|charcoal|burgundy|natural|bone)";
+    "(?:optical\\s+white|summit\\s+white|light\\s+bone|dark\\s+heather\\s+grey|dark\\s+heather\\s+gray|heather\\s+grey|heather\\s+gray|light\\s+blue|dark\\s+blue|navy\\s+blue|sky\\s+blue|off\\s+white|sail|cream|ecru|beige|black|white|gray|grey|red|green|blue|yellow|pink|purple|orange|brown|khaki|olive|stone|ivory|silver|gold|tan|navy|charcoal|burgundy|natural|bone)";
   const colorway = new RegExp(`\\b(?:colou?r|colorway)\\s*[:/-]\\s*(${colorWord}(?:\\s*/\\s*${colorWord}){0,4})`, "i").exec(text)?.[1];
   if (colorway) return titleCaseColor(colorway);
   const slashColor = new RegExp(`\\b(${colorWord}(?:\\s*/\\s*${colorWord}){1,4})\\b`, "i").exec(text)?.[1];
@@ -966,6 +975,7 @@ function inferCategoryHintsFromTitle(title?: string | null): string[] {
   if (/\bt-?shirt\b|\btee\b/.test(text)) return ["top", "tshirt"];
   if (/\bshirt\b/.test(text)) return ["top", "shirt"];
   if (/\bhoodie\b/.test(text)) return ["top", "hoodie"];
+  if (/\b(?:sweatshirts?|pullovers?)\b/.test(text)) return ["top", "sweatshirt"];
   if (/\bsweater|jumper|knit\b/.test(text)) return ["top", "sweater"];
   if (/\bracer jacket\b/.test(text)) return ["outerwear", "racer jacket"];
   if (/\bjacket\b/.test(text)) return ["outerwear", "jacket"];
@@ -1004,8 +1014,7 @@ function removeBrandWords(title: string, brand?: string | null) {
     const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     next = next
       .replace(new RegExp(`^${escaped}\\s+`, "i"), "")
-      .replace(new RegExp(`\\s+[|–-]\\s*${escaped}\\s*$`, "i"), "")
-      .replace(new RegExp(`\\b${escaped}\\b`, "i"), "");
+      .replace(new RegExp(`\\s+[|–-]\\s*${escaped}\\s*$`, "i"), "");
   }
   return next.replace(/\s+/g, " ").trim();
 }
@@ -1072,7 +1081,7 @@ function cleanRetailProductTitle(params: {
   const noun = productNounFromHints(params.categoryHints ?? inferCategoryHintsFromTitle(title), title);
   const shouldRebuild =
     isLicensedGraphicText(raw) ||
-    /\/[A-Za-z0-9&'.-]+/.test(raw);
+    /^[^\s/]+\/[A-Za-z0-9&'.-]+\s/.test(raw);
   if (!shouldRebuild) {
     return title.charAt(0).toUpperCase() + title.slice(1);
   }
@@ -1150,6 +1159,9 @@ export function inferBrand(metadata: Partial<ProductMetadata>, domain?: string |
   const titleText = `${metadata.title ?? ""} ${metadata.description ?? ""} ${(metadata.categoryHints ?? []).join(" ")}`;
   const explicit = cleanText(metadata.brand, 120);
   const retailer = cleanText(metadata.retailer, 120);
+  if (explicit?.toUpperCase() === "MW" && /(?:^|\.)madewell\.com$/i.test(domain ?? "")) {
+    return { brand: "Madewell", confidence: "high" as ProductFieldConfidence };
+  }
   if (explicit && !/^amazon(?:\.[a-z.]+)?$/i.test(explicit)) {
     if (/\bessentials\b/i.test(titleText) && /fear\s+of\s+god/i.test(`${explicit} ${retailer} ${domain ?? ""}`)) {
       return { brand: "Fear of God ESSENTIALS", confidence: "high" as ProductFieldConfidence };
@@ -1226,7 +1238,7 @@ function classifyClosetCategoryText(text: string): Omit<ClosetCategoryResult, "c
   }
 
   if (/\b(hoodies?)\b/.test(value)) return { category: "top", subCategory: "hoodie" };
-  if (/\b(sweatshirts?)\b/.test(value)) return { category: "top", subCategory: "sweatshirt" };
+  if (/\b(sweatshirts?|pullovers?)\b/.test(value)) return { category: "top", subCategory: "sweatshirt" };
   if (/\b(sweaters?|jumpers?|knits?)\b/.test(value)) return { category: "top", subCategory: "sweater" };
   if (/\b(tanks?|tank tops?|vests?)\b/.test(value)) return { category: "top", subCategory: "tank" };
   if (/\bpolos?\b/.test(value)) return { category: "top", subCategory: "polo" };
@@ -2176,12 +2188,17 @@ export function extractProductMetadataFromHtml(
   const textAttributes = extractAttributeHintsFromText(`${rawTitle ?? ""} ${rawDescription ?? ""} ${stripVisibleText(html).slice(0, 30_000)}`);
   const color =
     nikeMetadata.color ??
+    checkedProductColor(html) ??
+    currentShopifyProductColor(html, parsed) ??
+    retailerTitleColor(html, parsed) ??
     generic.color ??
     jsonLd.color ??
     hmJson.color ??
     extractMeta(html, "product:color") ??
     extractMeta(html, "color") ??
-    extractColorFromText(rawTitle);
+    extractColorFromText(jsonLd.title) ??
+    extractColorFromText(rawTitle) ??
+    extractColorFromText(extractMeta(html, "og:title") ?? extractTitle(html));
   const displayColors = Array.from(new Set([
     generic.color,
     ...cleanList(jsonLd.displayColors, 8),
@@ -2200,7 +2217,7 @@ export function extractProductMetadataFromHtml(
     ...(nikeMetadata.materials ?? []),
     ...(jsonLd.materials ?? []),
     ...(hmJson.materials ?? []),
-    ...(textAttributes.materials ?? []),
+    ...normalizeMaterials([rawTitle, rawDescription]),
     ...normalizeMaterials([
       extractMeta(html, "product:material"),
       extractMeta(html, "material"),
@@ -2275,7 +2292,7 @@ export function extractProductMetadataFromHtml(
     description: rawDescription,
     productDescription: rawDescription,
     categoryHints,
-    material: materials[0] ?? jsonLd.material ?? hmJson.material ?? textAttributes.material ?? null,
+    material: materials[0] ?? jsonLd.material ?? hmJson.material ?? null,
     materials,
     fit,
     sleeveLength: nikeMetadata.sleeveLength ?? jsonLd.sleeveLength ?? hmJson.sleeveLength ?? textAttributes.sleeveLength ?? normalizeSleeveLength(rawTitle),
@@ -2459,8 +2476,17 @@ export function handleAmazonLink(url: URL, html: string): AmazonExtractionResult
   const generic = extractGenericProductDataSync(normalized.url.toString(), html);
   const title = cleanAmazonTitle(generic.title ?? extractMeta(html, "og:title") ?? extractTitle(html));
   const genericImages = rankGenericProductImages(generic, normalized.url).map((image) => image.url);
-  const imageUrls = (genericImages.length ? genericImages : amazonImagesFromStructuredHtml(normalized.url, html)).slice(0, 6);
-  const brand = generic.brand ?? extractAmazonBrandFromTitle(title);
+  const selectedImageTag = html.match(/<img\b[^>]*\sid=["']main-image["'][^>]*>/i)?.[0];
+  const selectedImageSrc = selectedImageTag?.match(/\sdata-a-hires=["']([^"']+)["']/i)?.[1];
+  const selectedImage = selectedImageSrc ? normalizeUrl(normalized.url, selectedImageSrc) : null;
+  const fallbackImages = genericImages.length ? genericImages : amazonImagesFromStructuredHtml(normalized.url, html);
+  const imageUrls = dedupeStableImageUrls([
+    ...(selectedImage && amazonImageLooksUsable(selectedImage) ? [selectedImage] : []),
+    ...fallbackImages,
+  ]).slice(0, 6);
+  const brandHeading = html.match(/<h[1-6]\b[^>]*class=["'][^"']*\bbrand-insights-inline\b[^"']*["'][^>]*>\s*Top Brand:\s*([^<]+)/i)?.[1];
+  const selectedColor = html.match(/<span\b[^>]*\sid=["']inline-twister-expanded-dimension-text-color_name["'][^>]*>([^<]+)</i)?.[1];
+  const brand = cleanText(brandHeading, 120) ?? generic.brand ?? extractAmazonBrandFromTitle(title);
   const inferred = inferAmazonCategoryFromTitle(title);
   const hasStructuredPrice = !!generic.debug?.sources?.includes("structured_data") && typeof generic.priceAmount === "number";
   const extractedPrice = hasStructuredPrice
@@ -2488,6 +2514,7 @@ export function handleAmazonLink(url: URL, html: string): AmazonExtractionResult
     title,
     titleSource: generic.titleSource ?? "amazon_page_title",
     brand: status === "ready" ? brand : null,
+    color: cleanText(selectedColor, 120),
     categoryHints: status === "ready" && inferred.category ? [inferred.category, inferred.subCategory ?? ""].filter(Boolean) : [],
     sku: asin,
     price: extractedPrice?.display ?? null,
@@ -2508,7 +2535,8 @@ export function handleAmazonLink(url: URL, html: string): AmazonExtractionResult
     categoryConfidence: generic.categoryConfidence,
     extractionDiagnostics: generic.diagnostics,
     warningCodes: generic.diagnostics?.warningCodes,
-    selectedImageReason: imageUrls.length ? generic.selectedImageReason ?? "open_graph_fallback_image" : null,
+    selectedImageReason: selectedImage && imageUrls[0] === selectedImage ? "amazon_selected_main_image" :
+      imageUrls.length ? generic.selectedImageReason ?? "open_graph_fallback_image" : null,
   });
   logger.info("[AMAZON_LINK] extraction", {
     asin,
@@ -2851,7 +2879,15 @@ export function productPageHttpError(status: number, host: string) {
 
 export function looksLikeBlockedProductPage(html: string) {
   const sample = html.slice(0, 40_000);
-  return /(?:bm-verify=|\/_sec\/verify|triggerInterstitialChallenge|<title>\s*Access Denied\s*<\/title>|verify you are human|robot check|captcha required)/i.test(sample);
+  if (/<form\b[^>]*\saction=["']\/errors(?:_page)?\/validateCaptcha["']/i.test(sample)) return true;
+  return /(?:id=["']sec-if-cpt-container["']|bm-verify=|\/_sec\/verify|triggerInterstitialChallenge|<title>\s*Access Denied\s*<\/title>|verify you are human|robot check|captcha required)/i.test(sample);
+}
+
+export function isProductRedirectToStorefront(original: URL, resolved: URL) {
+  // A removed or region-unavailable product can redirect to a locale homepage
+  // with perfectly valid OG images. Those images advertise the store, not the item.
+  const storefrontPath = /^\/(?:[a-z]{2}(?:[-_][a-z]{2})?(?:\/[a-z]{2})?\/?)?$/i;
+  return !storefrontPath.test(original.pathname) && storefrontPath.test(resolved.pathname);
 }
 
 export async function fetchResolvedProductPage(url: URL): Promise<FetchedProductPage> {
@@ -2891,6 +2927,11 @@ export async function fetchResolvedProductPage(url: URL): Promise<FetchedProduct
     }
     if (looksLikeBlockedProductPage(response.text)) {
       throw blockedStoreError(response.status, url.hostname);
+    }
+    if (isProductRedirectToStorefront(url, response.finalUrl)) {
+      throw new ProductLinkError("That product link redirected to the store homepage.", "no_metadata", {
+        reason: "product_redirected_to_storefront",
+      });
     }
     return {
       html: response.text.slice(0, MAX_HTML_CHARS),

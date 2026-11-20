@@ -287,6 +287,16 @@ function sortChatThreads(threads: AIChatThread[]) {
   });
 }
 
+function parseOutfitSave(value: unknown): AIMessage["outfitSave"] {
+  if (!value || typeof value !== "object") return undefined;
+  const choice = value as Record<string, unknown>;
+  if (choice.kind === "choose") return { kind: "choose" };
+  if (choice.kind === "target" && typeof choice.messageId === "string" && typeof choice.outfitId === "string") {
+    return { kind: "target", messageId: choice.messageId, outfitId: choice.outfitId };
+  }
+  return undefined;
+}
+
 function toChatMessage(snapshot: { id: string; data: () => Record<string, unknown> }): AIMessage | null {
   const data = snapshot.data() ?? {};
   const type = data.type;
@@ -327,6 +337,7 @@ function toChatMessage(snapshot: { id: string; data: () => Record<string, unknow
     outfits: Array.isArray(data.outfits) ? (data.outfits as AIMessage["outfits"]) : undefined,
     aura,
     agentResponse,
+    outfitSave: parseOutfitSave(data.outfitSave),
     agentActionStates:
       data.agentActionStates && typeof data.agentActionStates === "object" && !Array.isArray(data.agentActionStates)
         ? (data.agentActionStates as AIMessage["agentActionStates"])
@@ -644,7 +655,7 @@ export async function appendMessageToChat(
   uid: string,
   chatId: string,
   message: AIMessage,
-  options?: { threadId?: string | null; titleFromUserText?: string | null }
+  options?: { threadId?: string | null; titleFromUserText?: string | null; skipIfExists?: boolean }
 ) {
   const chatRef = chatDocRef(uid, chatId);
   const messageRef = doc(messageCollectionRef(uid, chatId), message.id);
@@ -659,6 +670,7 @@ export async function appendMessageToChat(
     shouldUpdateGeneratedTitle ? getDoc(chatRef) : Promise.resolve(null),
     getDoc(messageRef),
   ]);
+  if (options?.skipIfExists && existingMessageSnap.exists()) return;
   const existingThread = threadSnap?.exists() ? toChatThread(threadSnap) : null;
   const isNewMessage = !existingMessageSnap.exists();
   const batch = writeBatch(db);
@@ -672,6 +684,7 @@ export async function appendMessageToChat(
     ...(message.outfits ? { outfits: message.outfits } : {}),
     ...(sanitizedAura ? { aura: sanitizedAura } : {}),
     ...(sanitizedAgentResponse ? { agentResponse: sanitizedAgentResponse } : {}),
+    ...(message.outfitSave ? { outfitSave: message.outfitSave } : {}),
     ...(message.agentActionStates ? { agentActionStates: stripUndefinedDeep(message.agentActionStates) } : {}),
     createdAt:
       toMessageMillis(message.createdAt) ??

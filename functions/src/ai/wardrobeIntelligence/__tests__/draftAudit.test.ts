@@ -33,6 +33,32 @@ describe("draft audit classification", () => {
     expect(result.draftItems).toEqual([]);
   });
 
+  const extracted = {
+    ...readyAvailableItem,
+    draftState: null,
+    outfitExtraction: { traceId: "outfit-17", tempId: "trousers" },
+  };
+
+  it("accepts previously saved extractions with a null draft state", () => {
+    expect(isReadyClosetItem(extracted)).toBe(true);
+    expect(auditOne(extracted).readyVisibleCount).toBe(1);
+  });
+
+  it.each([
+    { outfitExtraction: undefined },
+    { outfitExtraction: { traceId: "outfit-17" } },
+    { isDraft: true },
+    { draftState: "photo_uploaded" },
+    { itemLifecycleStatus: "deleted" },
+    { status: "DELETED" },
+    { deletedAt: 1 },
+    { draftState: undefined },
+    { ingestionStatus: "pending" },
+    { ingestion: { status: "failed" } },
+  ])("rejects incomplete, removed, or unconfirmed extractions %j", (overrides) => {
+    expect(isReadyClosetItem({ ...extracted, ...overrides })).toBe(false);
+  });
+
   it("treats WORN ready items as visible", () => {
     const item = { ...readyAvailableItem, status: "WORN" };
 

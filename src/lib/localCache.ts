@@ -297,6 +297,7 @@ export function sanitizeChatMessageForCache(message: AIMessage): AIMessage | nul
     outfits: message.outfits,
     aura: message.aura ? sanitizeDeep(message.aura) : undefined,
     agentResponse: message.agentResponse ? sanitizeDeep(message.agentResponse) : undefined,
+    outfitSave: message.outfitSave,
     agentActionStates: message.agentActionStates ? sanitizeDeep(message.agentActionStates) : undefined,
     createdAt:
       toMessageMillis(message.createdAt) ??

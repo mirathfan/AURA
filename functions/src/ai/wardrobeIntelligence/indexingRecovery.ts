@@ -156,8 +156,7 @@ export async function processIndexingJob(uid: string, itemId: string, options: W
   });
 }
 
-// Invoked by the existing P1-04 five-minute scheduler. No sleeping retries,
-// second scheduler, Cloud Tasks service, or per-item event-triggered AI fan-out.
+// Each scheduled pass processes a bounded number of due jobs.
 export async function recoverWardrobeIndexing(options: WorkerOptions = {}) {
   const now = (options.now ?? Date.now)();
   const due = await getFirestore().collectionGroup(INDEXING_JOBS)

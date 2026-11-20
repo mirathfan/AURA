@@ -633,7 +633,7 @@ function buildAuraAgentOutfitActionPayload(
 
 function isSaveAuraAgentOutfitResult(value: unknown): value is SaveAuraAgentOutfitResult {
   const candidate = value as Partial<SaveAuraAgentOutfitResult> | null;
-  return !!candidate && candidate.saved === true && typeof candidate.savedOutfitId === "string";
+  return !!candidate && candidate.saved === true && typeof candidate.savedOutfitId === "string" && candidate.savedOutfitId.trim().length > 0;
 }
 
 function isLogAuraAgentOutfitWearResult(value: unknown): value is LogAuraAgentOutfitWearResult {

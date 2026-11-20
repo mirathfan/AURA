@@ -8,6 +8,7 @@ import { allowedWebOrigins } from "./shared/cors";
 import { setLogContext, tracedHandler } from "./shared/logger";
 import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "./shared/rateLimit";
 export { setAiConsent, resumeClosetAfterAiConsent } from "./aiConsent";
+export { recoverWardrobeIndexJobs } from "./ai/wardrobeIntelligence/scheduledIndexingRecovery";
 export { generateOutfitsV1 } from "./generateOutfitsV1";
 export { generateAuraSwipeBatch } from "./generateAuraSwipeBatch";
 export { outfitChatV1 } from "./outfitChatV1";

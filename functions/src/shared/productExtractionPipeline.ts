@@ -129,6 +129,9 @@ const IMPORTANT_VARIANT_PARAMS = new Set([
   "th",
   "psc",
   "variant",
+  "swatch",
+  "ccode",
+  "colordisplaycode",
   "variation",
   "color",
   "colour",
@@ -168,6 +171,31 @@ const RETAILERS: Array<{ id: string; label: string; domains: string[] }> = [
   { id: "amazon", label: "Amazon", domains: AMAZON_DOMAINS },
   { id: "adidas", label: "Adidas", domains: ["adidas.com"] },
   { id: "uniqlo", label: "Uniqlo", domains: ["uniqlo.com"] },
+  // These retailers use the shared structured-data/metadata extractor.
+  // Registration identifies the store; it does not imply a verified import.
+  { id: "gap", label: "Gap", domains: ["gap.com"] },
+  { id: "oldnavy", label: "Old Navy", domains: ["oldnavy.gap.com", "oldnavy.com"] },
+  { id: "bananarepublic", label: "Banana Republic", domains: ["bananarepublic.gap.com", "bananarepublic.com"] },
+  { id: "puma", label: "Puma", domains: ["puma.com"] },
+  { id: "cos", label: "COS", domains: ["cos.com"] },
+  { id: "madewell", label: "Madewell", domains: ["madewell.com"] },
+  { id: "everlane", label: "Everlane", domains: ["everlane.com"] },
+  { id: "taylorstitch", label: "Taylor Stitch", domains: ["taylorstitch.com"] },
+  { id: "marinelayer", label: "Marine Layer", domains: ["marinelayer.com"] },
+  { id: "kotn", label: "Kotn", domains: ["kotn.com"] },
+  { id: "colorfulstandard", label: "Colorful Standard", domains: ["colorfulstandard.com"] },
+  { id: "alo", label: "Alo Yoga", domains: ["aloyoga.com"] },
+  { id: "tentree", label: "tentree", domains: ["tentree.com"] },
+  { id: "alexmill", label: "Alex Mill", domains: ["alexmill.com"] },
+  { id: "outerknown", label: "Outerknown", domains: ["outerknown.com"] },
+  { id: "ayr", label: "AYR", domains: ["ayr.com"] },
+  { id: "goodamerican", label: "Good American", domains: ["goodamerican.com"] },
+  { id: "reigningchamp", label: "Reigning Champ", domains: ["reigningchamp.com"] },
+  { id: "rails", label: "Rails", domains: ["rails.com"] },
+  { id: "draperjames", label: "Draper James", domains: ["draperjames.com"] },
+  { id: "faherty", label: "Faherty", domains: ["fahertybrand.com"] },
+  { id: "showmeyourmumu", label: "Show Me Your Mumu", domains: ["showmeyourmumu.com"] },
+  { id: "universalstandard", label: "Universal Standard", domains: ["universalstandard.com"] },
 ];
 
 type JsonObject = Record<string, unknown>;
@@ -218,7 +246,12 @@ function hostMatches(host: string, domains: string[]) {
 }
 
 function retailerForHost(host: string) {
-  return RETAILERS.find((retailer) => hostMatches(host, retailer.domains)) ?? null;
+  // A child store such as oldnavy.gap.com must win over its parent gap.com.
+  return RETAILERS
+    .flatMap((retailer) => retailer.domains
+      .filter((domain) => hostMatches(host, [domain]))
+      .map((domain) => ({ retailer, specificity: domain.length })))
+    .sort((a, b) => b.specificity - a.specificity)[0]?.retailer ?? null;
 }
 
 export function amazonAsinFromProductUrl(url: URL): string | null {
@@ -534,6 +567,7 @@ function resultFromProductNode(product: JsonObject, pageUrl: URL, nodes: JsonObj
     title: cleanText(valueByKeys(product, ["name", "headline", "title"]), 220),
     titleSource: "json_ld_product_name",
     brand: brandFromNode(product),
+    color: cleanText(Array.isArray(product.color) && product.color.length === 1 ? product.color[0] : product.color, 120),
     category: cleanText(product.category ?? breadcrumbs[breadcrumbs.length - 2] ?? breadcrumbs[breadcrumbs.length - 1], 120),
     subcategory: cleanText(breadcrumbs[breadcrumbs.length - 1], 120),
     description: cleanText(product.description, 900),
@@ -566,7 +600,29 @@ export function extractStructuredData(html: string, pageUrl: string | URL): Prod
   const url = new URL(pageUrl.toString());
   const { values, warnings } = parseJsonLdBlocks(html);
   const nodes = values.flatMap(flattenJsonLd);
+  const selectedProduct = nodes.find((node) => {
+    if (!jsonTypeIncludes(node["@type"], "Product")) return false;
+    const candidates = [node.url, ...asArray(node.offers).map((offer) => asObject(offer)?.url)];
+    return candidates.some((candidate) => {
+      if (typeof candidate !== "string") return false;
+      try {
+        const productUrl = new URL(candidate, url);
+        if (normalizedHost(productUrl.hostname) !== normalizedHost(url.hostname)) return false;
+        const path = (value: URL) => value.pathname.replace(/\/$/, "");
+        const variantParams = Array.from(url.searchParams.entries())
+          .filter(([key]) => IMPORTANT_VARIANT_PARAMS.has(key.toLowerCase()));
+        // Retailers may change the descriptive slug in their offer URL, but
+        // the product ID and every requested variant must still agree.
+        const sameProduct = path(productUrl) === path(url) ||
+          (variantParams.length > 0 && path(productUrl).split("/").pop() === path(url).split("/").pop());
+        return sameProduct && variantParams.every(([key, value]) => productUrl.searchParams.get(key) === value);
+      } catch {
+        return false;
+      }
+    });
+  });
   const product =
+    selectedProduct ??
     nodes.find((node) => jsonTypeIncludes(node["@type"], "ProductGroup")) ??
     nodes.find((node) => jsonTypeIncludes(node["@type"], "Product"));
   if (!product) {
@@ -579,6 +635,14 @@ export function extractStructuredData(html: string, pageUrl: string | URL): Prod
     };
   }
   const result = resultFromProductNode(product, url, nodes);
+  // A variant owns its offer, image and color; the containing group owns the
+  // garment identity (resale variants can contain listing IDs/provider names).
+  const parent = selectedProduct && nodes.find((node) =>
+    jsonTypeIncludes(node["@type"], "ProductGroup") && asArray(node.hasVariant).includes(selectedProduct));
+  if (parent) {
+    result.title = cleanText(parent.name, 220) ?? result.title;
+    result.brand = brandFromNode(parent) ?? result.brand;
+  }
   return {
     ...result,
     debug: {
@@ -589,19 +653,19 @@ export function extractStructuredData(html: string, pageUrl: string | URL): Prod
   };
 }
 
-function metaContent(html: string, key: string): string | null {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const patterns = [
-    new RegExp(`<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
-    new RegExp(`<meta[^>]+name=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
-    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${escaped}["'][^>]*>`, "i"),
-    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${escaped}["'][^>]*>`, "i"),
-  ];
-  for (const pattern of patterns) {
-    const value = html.match(pattern)?.[1];
-    if (value) return cleanText(decodeHtmlEntities(value), 800);
+export function readProductMetaContent(html: string, key: string): string | null {
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const name = tag.match(/\s(?:name|property)\s*=\s*(["'])(.*?)\1/i)?.[2];
+    if (name?.toLowerCase() !== key.toLowerCase()) continue;
+    const value = tag.match(/\scontent\s*=\s*(["'])([\s\S]*?)\1/i)?.[2];
+    if (value) return decodeHtmlEntities(value);
   }
   return null;
+}
+
+function metaContent(html: string, key: string): string | null {
+  return cleanText(readProductMetaContent(html, key), 800);
 }
 
 function titleTag(html: string) {
@@ -705,6 +769,28 @@ function balancedJsonAfterAssignment(script: string, names: string[]) {
         depth--;
         if (depth === 0) return script.slice(start, i + 1);
       }
+    }
+  }
+  return null;
+}
+
+export function currentShopifyProductColor(html: string, pageUrl: URL): string | null {
+  for (const script of extractScriptBodies(html)) {
+    const json = balancedJsonAfterAssignment(script.body, ["var meta =", "ShopifyAnalytics.meta ="]);
+    const product = asObject(asObject(json ? tryParseJson(json) : null)?.product);
+    if (!product || pageUrl.pathname.split("/products/")[1]?.replace(/\/$/, "") !== product.handle) continue;
+    const requested = pageUrl.searchParams.get("variant");
+    const variants = asArray(product.variants).map(asObject).filter((v): v is JsonObject => !!v);
+    const colors = variants.filter((v) => !requested || String(v.id) === requested).map((v) => {
+      const title = cleanText(v.public_title, 120);
+      // Shopify separates option values with spaced slashes; preserve slashes
+      // within a color name, e.g. Royal/Green. Only strip a recognized size.
+      return title?.match(/^(.+?)\s+\/\s+(?:XXS|XS|SM|S|MD|M|LG|L|XL|XXL|[1-5]XL|\d{1,2})$/i)?.[1] ?? null;
+    });
+    if (colors.length && colors.every((color) => color && color === colors[0])) {
+      const color = colors[0]!;
+      const parts = color.split(/\s+\/\s+/);
+      return parts.every((part) => part.toLowerCase() === parts[0].toLowerCase()) ? parts[0] : color;
     }
   }
   return null;
@@ -892,7 +978,7 @@ function hasExtractionEvidence(result: Partial<ProductExtractionResult>) {
 
 const PRODUCT_TITLE_NOUN_RE = /\b(?:shirt|t-?shirt|tee|polo|hoodie|sweatshirt|sweater|jumper|cardigan|jacket|bomber|coat|blazer|trench|vest|tank|blouse|top|jeans|trousers|pants|shorts|skirt|dress|jumpsuit|romper|shoe|sneaker|trainer|boot|loafer|sandal|heel|bag|tote|backpack|wallet|belt|hat|cap|beanie|scarf|sunglasses|watch)\b/i;
 const PRODUCT_SIZE_TOKEN_RE = /^(?:xxs|xs|s|m|l|xl|xxl|2xl|3xl|\d{1,2}(?:\.5)?|one\s+size)$/i;
-const PRODUCT_COLOR_WORD_RE = /^(?:black|white|grey|gray|blue|navy|green|red|pink|purple|brown|tan|beige|cream|ivory|yellow|orange|silver|gold|olive|khaki|charcoal|natural|heather|marl|agave|ecru|stone)$/i;
+const PRODUCT_COLOR_WORD_RE = /^(?:black|white|optical|grey|gray|blue|navy|green|red|pink|purple|brown|tan|beige|cream|ivory|yellow|orange|silver|gold|olive|khaki|charcoal|natural|heather|marl|agave|ecru|stone)$/i;
 
 function cleanProductTitleVariantSuffix(value?: string | null) {
   let title = cleanText(value, 220);
@@ -907,7 +993,7 @@ function cleanProductTitleVariantSuffix(value?: string | null) {
     for (let suffixLength = Math.min(3, words.length - 2); suffixLength >= 1; suffixLength -= 1) {
       const suffix = words.slice(-suffixLength);
       if (suffix.every((word) => PRODUCT_COLOR_WORD_RE.test(word))) {
-        title = words.slice(0, -suffixLength).join(" ");
+        title = words.slice(0, -suffixLength).join(" ").replace(/\s+in$/i, "");
         break;
       }
     }
@@ -1373,7 +1459,57 @@ function adapterResult(ctx: ProductExtractionContext, id: string, fields: Partia
   };
 }
 
+type UniqloProductState = {
+  pdp?: { product?: string };
+  selection?: Record<string, { colorDisplayCode?: string }>;
+  entity?: { pdpEntity?: Record<string, { product?: {
+    productId?: string;
+    name?: string;
+    colors?: { displayCode?: string; name?: string }[];
+    images?: { main?: Record<string, { image?: string }> };
+    prices?: { base?: UniqloPrice; promo?: UniqloPrice };
+    breadcrumbs?: { category?: { locale?: string } };
+  } }> };
+};
+type UniqloPrice = { value?: number; currency?: { code?: string } };
+
+function uniqloSelectedProduct(ctx: ProductExtractionContext): Partial<ProductExtractionResult> {
+  const match = ctx.html.match(/window\.__PRELOADED_STATE__\s*=\s*({[\s\S]*?})\s*;?\s*<\/script>/i);
+  if (!match) return {};
+  let state: UniqloProductState;
+  try {
+    state = JSON.parse(match[1]);
+  } catch {
+    return {};
+  }
+  const key = state?.pdp?.product;
+  const product = key ? state.entity?.pdpEntity?.[key]?.product : null;
+  if (!product?.productId || !ctx.url.pathname.split("/").includes(product.productId)) return {};
+  const code = ctx.url.searchParams.get("colorDisplayCode") ?? state.selection?.[product.productId]?.colorDisplayCode;
+  if (!code || !Array.isArray(product.colors)) return {};
+  const color = cleanText(product.colors.find((entry) => entry.displayCode === code)?.name, 120);
+  const image = normalizeImageUrl(ctx.url, product.images?.main?.[code]?.image);
+  if (!color || !image) return {};
+  const price = product.prices?.promo ?? product.prices?.base;
+  return adapterResult(ctx, "uniqlo", {
+    brand: "Uniqlo",
+    title: cleanText(product.name, 220),
+    color,
+    category: cleanText(product.breadcrumbs?.category?.locale, 120),
+    canonicalUrl: ctx.url.toString(),
+    priceAmount: parseAmount(price?.value),
+    currency: cleanText(price?.currency?.code, 3),
+    images: [{ url: image, altText: color, source: "embedded_app_state", selectedImageReason: "selected_color_image" }],
+  });
+}
+
 export const retailerAdapters: RetailerAdapter[] = [
+  {
+    id: "uniqlo",
+    domains: ["uniqlo.com"],
+    canHandle: (url) => hostMatches(url.hostname, ["uniqlo.com"]),
+    extract: uniqloSelectedProduct,
+  },
   {
     id: "hm",
     domains: ["hm.com"],
@@ -1475,7 +1611,8 @@ export const retailerAdapters: RetailerAdapter[] = [
         title: cleanupTitle(firstFromSources(ctx, "title") as string | null, "Foot Locker"),
         brand: firstFromSources(ctx, "brand") as string | null,
         styleId: (firstFromSources(ctx, "styleId") as string | null) ?? cleanText(sourceText(ctx).match(/\bstyle(?:\s*id)?["':\s-]+([A-Z0-9-]{4,})/i)?.[1], 80),
-        color: (firstFromSources(ctx, "color") as string | null) ?? colorFromText(sourceText(ctx)),
+        color: cleanText(ctx.html.match(/>\s*Color\s+([^<>]{1,120}?)\s+is selected\s*</i)?.[1], 120) ??
+          (firstFromSources(ctx, "color") as string | null),
       }),
   },
   {

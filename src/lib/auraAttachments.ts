@@ -1,3 +1,4 @@
+import { initialAuraCandidateLifecycle, type AuraCandidateSaveMode } from "@/src/lib/auraCandidateLifecycle";
 import * as FileSystem from "expo-file-system/legacy";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { addDoc, collection, doc, setDoc, updateDoc } from "@/src/lib/mediaFirestore";
@@ -1406,7 +1407,7 @@ export async function createAuraItemDraftsFromCandidates(params: {
   uid: string;
   candidates: AuraCandidateItem[];
   prompt: string;
-  mode: "pending" | "awaiting_confirmation";
+  mode: AuraCandidateSaveMode;
   localPhotosByCandidateId?: Record<string, AuraCandidateLocalPhoto | undefined>;
 }) {
   const { uid, candidates, prompt, mode, localPhotosByCandidateId = {} } = params;
@@ -1434,25 +1435,21 @@ export async function createAuraItemDraftsFromCandidates(params: {
     const records = uniqueUrls.map((url, index) => imageRecordForUrl(url, index === 0));
     const now = Date.now();
     const sourceHash = uniqueUrls.join("|");
-    const draftState = mode === "awaiting_confirmation" ? "draft" : "photo_uploaded";
-    const ingestionStatus = "pending";
+    const lifecycle = initialAuraCandidateLifecycle(mode, candidate.sourceType);
     const category = normalizeCandidateCategory(candidate);
     const matchedLocalPhoto = localPhotosByCandidateId[candidate.candidateId];
     const localPhoto = matchedLocalPhoto ?? undefined;
     const imageSourceReason = candidateImageSourceReason(candidate, !!localPhoto?.localUri);
     const docRef = doc(collection(db, "users", uid, "items"));
     const payload = {
-      isDraft: true,
-      draftState,
+      ...lifecycle,
       auraCandidateState: mode === "awaiting_confirmation" ? "candidate" : "confirmed",
-      itemLifecycleStatus: mode === "awaiting_confirmation" ? "candidate" : "processing",
       status: "AVAILABLE",
       category,
       subCategory: candidate.subCategory || "",
       wearCountSinceWash: 0,
-      ingestionStatus,
       ingestion: {
-        status: ingestionStatus,
+        status: lifecycle.ingestionStatus,
         lastRunAt: now,
       },
       ingestionSource: {

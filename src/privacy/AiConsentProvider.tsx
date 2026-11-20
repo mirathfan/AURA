@@ -9,7 +9,7 @@ import { AI_CONSENT_VERSION, isCurrentAiConsent, type AiConsentRecord, type AiCo
 import { AURA_PUBLIC_DETAILS, AI_CONSENT_DISCLOSURE, PRIVACY_SECTIONS, PRIVACY_UPDATED } from "../../shared/privacyPolicy";
 import { allowAiLocally, blockAiLocally, isAiLocallyBlocked, saveAiConsent } from "./consentClient";
 
-type State = { uid: string; record: AiConsentRecord | null; confirmed: boolean; error: boolean };
+type State = { uid: string; record: AiConsentRecord | null; confirmed: boolean; error: string | null };
 const ConsentContext = createContext<{
   approved: boolean; record: AiConsentRecord | null; confirmed: boolean;
   review: () => void;
@@ -43,10 +43,11 @@ export function AiConsentProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const uid = user?.uid ?? "";
   const { colors } = useAppTheme();
-  const [state, setState] = useState<State>({ uid: "", record: null, confirmed: false, error: false });
+  const [state, setState] = useState<State>({ uid: "", record: null, confirmed: false, error: null });
   const [dismissedUid, setDismissedUid] = useState<string | null>(null);
   const [reviewUid, setReviewUid] = useState<string | null>(null);
   const [showPolicy, setShowPolicy] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [locallyDeniedUid, setLocallyDeniedUid] = useState<string | null>(null);
@@ -58,17 +59,19 @@ export function AiConsentProvider({ children }: { children: React.ReactNode }) {
   const deletion = useAccountDeletion();
   const visible = !deletion.status && !!uid && (reviewUid === uid || (dismissedUid !== uid && needsChoice));
 
+  useEffect(() => { setDismissedUid(null); setReviewUid(null); }, [uid]);
+
   useEffect(() => {
     let live = true;
-    setDismissedUid(null); setReviewUid(null); setMessage(""); setShowPolicy(false);
-    setState({ uid, record: null, confirmed: false, error: false });
+    setMessage(""); setShowPolicy(false);
+    setState({ uid, record: null, confirmed: false, error: null });
     if (!uid) return;
     const unsubscribe = onSnapshot(doc(db, "users", uid, "privacy", "aiConsent"), { includeMetadataChanges: true }, (snapshot) => {
       if (live) setState({ uid, record: snapshot.exists() ? snapshot.data() as AiConsentRecord : null,
-        confirmed: !snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites, error: false });
-    }, () => { if (live) setState({ uid, record: null, confirmed: false, error: true }); });
+        confirmed: !snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites, error: null });
+    }, (error) => { if (live) setState({ uid, record: null, confirmed: false, error: error.code }); });
     return () => { live = false; unsubscribe(); };
-  }, [uid]);
+  }, [uid, retryCount]);
 
   async function choose(status: AiConsentStatus) {
     if (saving.current || !uid) return;
@@ -99,14 +102,19 @@ export function AiConsentProvider({ children }: { children: React.ReactNode }) {
   return <ConsentContext.Provider value={{ approved, record, confirmed: !!current?.confirmed, review: () => { setMessage(""); setShowPolicy(false); setReviewUid(uid); } }}>
     {children}
     <Modal visible={visible} animationType="slide" onRequestClose={() => { if (!busy) { setDismissedUid(uid); setReviewUid(null); } }}>
-      <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 24, paddingTop: 64, paddingBottom: 44, gap: 18, backgroundColor: colors.background }}>
+      <ScrollView style={{ backgroundColor: colors.background }} contentContainerStyle={{ flexGrow: 1, padding: 24, paddingTop: 64, paddingBottom: 44, gap: 18, backgroundColor: colors.background }}>
         <Text accessibilityRole="header" style={{ color: colors.textPrimary, fontSize: 28, fontWeight: "700" }}>{showPolicy ? "Privacy Policy" : "Your choice about AI"}</Text>
         {showPolicy ? <><PrivacyPolicyText />{button("Back to your choice", () => setShowPolicy(false))}</> : <>
           {AI_CONSENT_DISCLOSURE.map((paragraph) => <Text key={paragraph} style={{ color: colors.textSecondary, fontSize: 16, lineHeight: 24 }}>{paragraph}</Text>)}
           <Text style={{ color: colors.textSecondary }}>Policy version {AI_CONSENT_VERSION}. {approved ? "AI sharing is on." : "AI sharing is off or not yet confirmed."}</Text>
           {button("Privacy Policy", () => setShowPolicy(true))}
           {!!message && <Text accessibilityRole="alert" style={{ color: colors.textPrimary }}>{message}</Text>}
-          {current?.error && <Text style={{ color: colors.textSecondary }}>Privacy settings could not be loaded. Reconnect before accepting.</Text>}
+          {current?.error && <>
+            <Text accessibilityRole="alert" style={{ color: colors.textSecondary }}>{current.error === "permission-denied"
+              ? "The server denied access to your privacy settings. AI stays off. Please contact support if retrying does not help."
+              : "Privacy settings could not be loaded. Check your connection and retry. AI stays off."}</Text>
+            {button("Retry privacy settings", () => setRetryCount((count) => count + 1), busy)}
+          </>}
           {approved ? button("Revoke AI consent", () => void choose("revoked"), busy)
             : button(busy ? "Saving…" : "Accept AI sharing", () => void choose("accepted"), busy || !current?.confirmed)}
           {!approved && isCurrentAiConsent(record) && button("Retry revocation", () => void choose("revoked"), busy)}

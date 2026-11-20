@@ -1,4 +1,5 @@
-import { buildOutfitRetrievalPlan, normalizeOutfitGenerationInput } from "../outfitContext";
+import { classifyAuraStylingAgentIntent } from "../agentIntent";
+import { retrieveOutfitGenerationContext, buildOutfitRetrievalPlan, normalizeOutfitGenerationInput } from "../outfitContext";
 import type {
   GeneratedOutfit,
   NormalizedOutfitGenerationInput,
@@ -126,6 +127,59 @@ function withColors(nextCandidate: OutfitCandidate, colors: string[]): OutfitCan
 }
 
 describe("validateGeneratedOutfits", () => {
+  it("keeps the original look and restricts a sneaker-to-boot swap to eligible boots", async () => {
+    const previousOutfit = { occasion: "dinner", items: [
+      { itemId: "shirt", role: "top" }, { itemId: "pants", role: "bottom" },
+      { itemId: "sneakers", role: "footwear" },
+    ] };
+    const query = "Swap the sneakers for boots.";
+    const { constraints } = classifyAuraStylingAgentIntent({ query, previousOutfit });
+    const input = normalizeOutfitGenerationInput({
+      query, occasion: constraints.occasion, requiredItemIds: constraints.selectedItemIds,
+      avoidItemIds: constraints.avoidItemIds,
+    });
+    const derbies = candidate("derbies", "footwear", "Black Leather Derbies");
+    const boots = candidate("boots", "footwear", "Brown Leather Chelsea Boots");
+    const closet = context({
+      top: [candidate("shirt", "top", "Black Boxy Tee")],
+      bottom: [candidate("pants", "bottom", "Black Wide Cargos")],
+      footwear: [derbies, boots, candidate("sneakers", "footwear", "White Leather Sneakers")],
+    });
+    const eligible = await retrieveOutfitGenerationContext("uid", input, {
+      retrieveRoleCandidates: async ({ role }) => closet.candidates[role],
+      retrieveRequiredItemCandidates: async () => ({ candidates: [closet.candidates.top[0], closet.candidates.bottom[0]] }),
+    });
+    expect(eligible.candidates.footwear.map((item) => item.itemId)).toEqual(["boots"]);
+    expect(input.requiredItemIds).toEqual(["shirt", "pants"]);
+    expect(input.avoidItemIds).toEqual(["sneakers"]);
+    const swap = (shoe: string) => ({ ...outfit([
+      { itemId: "shirt", role: "top", reason: "" }, { itemId: "pants", role: "bottom", reason: "" },
+      { itemId: shoe, role: "footwear", reason: "" },
+    ]), occasion: "dinner" });
+    expect(validateGeneratedOutfits([swap("derbies")], closet, input).valid).toBe(false);
+    expect(validateGeneratedOutfits([swap("boots")], eligible, input).valid).toBe(true);
+
+    const multi = classifyAuraStylingAgentIntent({ query: "Swap the sneakers for boots and change the shirt.", previousOutfit });
+    expect(multi.constraints.selectedItemIds).not.toContain("shirt");
+  });
+
+  it("requires an available warm layer for a cold walk and rejects office drift", () => {
+    const request = normalizeOutfitGenerationInput({
+      query: "Keep the pants and make it work for a cold walk.", occasion: "dinner date",
+      weather: "cold", requiredItemIds: ["trousers"], avoidItemIds: ["old-shoes"],
+    });
+    const closet = context({outerwear: [candidate("coat", "outerwear", "Wool overcoat")]});
+    const edited = { ...outfit([
+      {itemId: "shirt", role: "top", reason: ""},
+      {itemId: "trousers", role: "bottom", reason: ""},
+      {itemId: "loafers", role: "footwear", reason: ""},
+    ]), occasion: "dinner date" };
+    expect(validateGeneratedOutfits([edited], closet, request).errors.join(" ")).toMatch(/warm layer/i);
+    edited.items.push({ itemId: "coat", role: "outerwear", reason: "Cold walk" });
+    expect(validateGeneratedOutfits([edited], closet, request).valid).toBe(true);
+    expect(validateGeneratedOutfits([{...edited, occasion: "office"}], closet, request).valid).toBe(false);
+  });
+
   it("passes a valid top + bottom + footwear outfit", () => {
     const result = validateGeneratedOutfits([
       outfit([

@@ -1,0 +1,54 @@
+# Local QA only. Start scripts/local-backend with the app on Metro 8096.
+# Confirm demo-aura-local runtime before running. Do not use a production account.
+# Supply PRODUCT_URL and ITEM_NAME (regex-escaped exact preview name).
+# This flow is prepared, not verified: native automation timed out in this run.
+# Screenshots require manual comparison with the retailer's selected variant.
+appId: com.kasat.aura
+name: Product link inline preview and persistence
+---
+- launchApp:
+    stopApp: false
+    arguments:
+      RCT_jsLocation: '127.0.0.1:8096'
+- tapOn:
+    text: 'Close product link'
+    optional: true
+- tapOn: 'Closet'
+- tapOn: 'Add item'
+- tapOn: 'Paste Product Link'
+- tapOn: 'Product URL'
+- setClipboard: ${PRODUCT_URL}
+- pasteText
+- tapOn: 'Search'
+- extendedWaitUntil:
+    visible: ${ITEM_NAME}
+    timeout: 60000
+- takeScreenshot: 'product-link-preview'
+- scrollUntilVisible:
+    element: 'Add to Wardrobe'
+    direction: DOWN
+    timeout: 10000
+- tapOn: 'Add to Wardrobe'
+- extendedWaitUntil:
+    visible: 'Added to Wardrobe'
+    timeout: 60000
+- scrollUntilVisible:
+    element: 'Paste product link'
+    direction: UP
+    timeout: 10000
+- assertVisible: 'Paste product link'
+- takeScreenshot: 'product-link-saved-sheet'
+- tapOn: 'Close product link'
+- stopApp
+- launchApp:
+    arguments:
+      RCT_jsLocation: '127.0.0.1:8096'
+- tapOn: 'Closet'
+- tapOn: 'Search closet'
+- inputText: ${SEARCH_NAME}
+- extendedWaitUntil:
+    visible: ${ITEM_CARD_PATTERN}
+    timeout: 60000
+- tapOn: ${ITEM_CARD_PATTERN}
+- assertVisible: ${ITEM_NAME}
+- takeScreenshot: 'product-link-reopened-item'

@@ -2,10 +2,12 @@ import React from "react";
 
 import type { AppColors } from "@/constants/theme";
 import AuraAgentOldStyleOutfitCard from "@/src/components/aura/AuraAgentOldStyleOutfitCard";
+import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraAgentOutfit, AuraAgentSuggestedAction } from "@/src/types/auraAgent";
 
 export default function AuraAgentOutfitCard({
   colors,
+  itemsById,
   outfit,
   selected = false,
   showSelectedIndicator = false,
@@ -19,6 +21,7 @@ export default function AuraAgentOutfitCard({
   showDevDetails = true,
 }: {
   colors: AppColors;
+  itemsById?: Map<string, ClothingItem>;
   outfit: AuraAgentOutfit;
   selected?: boolean;
   showSelectedIndicator?: boolean;
@@ -34,6 +37,7 @@ export default function AuraAgentOutfitCard({
   return (
     <AuraAgentOldStyleOutfitCard
       colors={colors}
+      itemsById={itemsById}
       outfit={outfit}
       selected={selected}
       showSelectedIndicator={showSelectedIndicator}

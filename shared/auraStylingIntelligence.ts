@@ -621,13 +621,14 @@ export function classifyAuraStylingIntent(
   const replacePiece =
     has(text, /\b(switch|swap|replace|change|use different|different|instead)\b/) &&
     !!targetItemCategory;
-  const removePiece =
+  const excludesPiece =
     has(text, /\b(remove|take out|get rid of|dont use|do not use|dont want|do not want|lose|no)\b/) &&
     !!targetItemCategory;
+  const removePiece = hasPreviousOutfit && excludesPiece;
+  const hasExclusions = excludesPiece || excludedColors.length > 0 || excludedCategories.length > 0;
   const improveFit =
     has(text, /\b(make it better|make this better|improve|refine|polish|complete|finish|dress this up|dress it up|dress this down|dress it down|warmer|cooler|date appropriate|less basic|cleaner|classier)\b/) ||
-    excludedColors.length > 0 ||
-    excludedCategories.length > 0 ||
+    (hasPreviousOutfit && hasExclusions) ||
     requiredItems.length > 0;
 
   if (iteration) requestedChanges.push("another_version");
@@ -649,7 +650,7 @@ export function classifyAuraStylingIntent(
   else if (occasionChange) intent = "occasion_change";
   else if (feedback) intent = "outfit_feedback";
   else if (improveFit) intent = "improve_fit";
-  else if (generation || occasion) intent = "generate_outfit";
+  else if (occasion || hasExclusions) intent = "generate_outfit";
 
   if (
     intent === "non_styling_chat" &&

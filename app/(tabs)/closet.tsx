@@ -741,6 +741,7 @@ export default function ClosetScreen() {
   const [productLinkTouched, setProductLinkTouched] = useState(false);
   const [productLinkLoading, setProductLinkLoading] = useState(false);
   const [productLinkSaving, setProductLinkSaving] = useState(false);
+  const [productLinkSaved, setProductLinkSaved] = useState(false);
   const [productLinkError, setProductLinkError] = useState("");
   const [productLinkRecoverableError, setProductLinkRecoverableError] =
     useState<ProductLinkRecoverableError | null>(null);
@@ -917,6 +918,7 @@ export default function ClosetScreen() {
     [productLinkPreview],
   );
   const productLinkCanSave =
+    !productLinkSaved &&
     !!uid &&
     !!productLinkPreview &&
     !!productLinkDraft &&
@@ -1491,6 +1493,7 @@ export default function ClosetScreen() {
   }, [createDraftsFromAssets]);
 
   const resetProductLinkSheet = React.useCallback(() => {
+    setProductLinkSaved(false);
     setProductLink("");
     setProductLinkTouched(false);
     setProductLinkError("");
@@ -1524,6 +1527,7 @@ export default function ClosetScreen() {
       return;
     }
     setProductLinkLoading(true);
+    setProductLinkSaved(false);
     setProductLinkError("");
     setProductLinkRecoverableError(null);
     setProductLinkPreview(null);
@@ -1564,21 +1568,23 @@ export default function ClosetScreen() {
     setLinkModalOpen(true);
   }, [resetProductLinkSheet, uid]);
 
-  const handlePasteFromClipboard = React.useCallback(async () => {
+  const handlePasteFromClipboard = React.useCallback(async (pastedText?: string) => {
     try {
-      const clipboard = await Clipboard.getStringAsync();
+      const clipboard = pastedText ?? await Clipboard.getStringAsync();
       debugClosetLog("[PASTE_LINK_UI]", "pasted from clipboard", {
         uid,
         hasClipboardText: !!clipboard?.trim(),
         hasValidUrl: !!validHttpUrl(clipboard),
       });
       setProductLink(clipboard ?? "");
+      setProductLinkSaved(false);
       setProductLinkTouched(true);
       setProductLinkError("");
       setProductLinkRecoverableError(null);
       setProductLinkPreview(null);
       setProductLinkDraft(null);
       setProductLinkEditing(false);
+      if (validHttpUrl(clipboard)) await startProductLinkReview(clipboard, "clipboard");
     } catch (error) {
       debugClosetLog("[PASTE_LINK_UI]", "pasted from clipboard", {
         uid,
@@ -1587,7 +1593,7 @@ export default function ClosetScreen() {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
     }
-  }, [uid]);
+  }, [startProductLinkReview, uid]);
 
   const handleAddProductLinkFromScreenshot = React.useCallback(async () => {
     if (productLinkBusy) return;
@@ -1619,7 +1625,7 @@ export default function ClosetScreen() {
   }, [normalizedProductLink, productLink, productLinkBusy, startProductLinkReview, uid]);
 
   const handleSaveProductLinkToCloset = React.useCallback(async () => {
-    if (!uid || !productLinkPreview || !productLinkDraft || productLinkSaving) return;
+    if (!uid || !productLinkPreview || !productLinkDraft || productLinkSaving || productLinkSaved) return;
     setProductLinkSaving(true);
     setProductLinkError("");
     setProductLinkRecoverableError(null);
@@ -1628,15 +1634,16 @@ export default function ClosetScreen() {
         preview: productLinkPreview,
         draft: productLinkDraft,
       });
-      await createAuraItemDraftsFromCandidates({
+      const created = await createAuraItemDraftsFromCandidates({
         uid,
         candidates: [candidate],
         prompt: "Closet product link import",
-        mode: "pending",
+        mode: "reviewed_product_link",
       });
+      if (created.length !== 1) throw new Error("No item was saved");
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-      setLinkModalOpen(false);
-      resetProductLinkSheet();
+      setProductLinkSaved(true);
+      setProductLinkEditing(false);
       Toast.itemAdded();
     } catch (error) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
@@ -1648,7 +1655,7 @@ export default function ClosetScreen() {
     } finally {
       setProductLinkSaving(false);
     }
-  }, [productLinkDraft, productLinkPreview, productLinkSaving, resetProductLinkSheet, uid]);
+  }, [productLinkDraft, productLinkPreview, productLinkSaved, productLinkSaving, uid]);
 
   const handleRetryProcessingItem = React.useCallback(
     async (item: ClosetItem) => {
@@ -2034,12 +2041,17 @@ export default function ClosetScreen() {
         pressedOpacity={0.9}
         accessibilityRole="button"
         accessibilityLabel="Add item"
-        style={{
+        containerStyle={{
           position: "absolute",
           right: closetFabRight,
           bottom: closetFabBottom,
           width: CLOSET_FAB_SIZE,
           height: CLOSET_FAB_SIZE,
+          zIndex: 25,
+        }}
+        style={{
+          width: "100%",
+          height: "100%",
           borderRadius: 999,
           alignItems: "center",
           justifyContent: "center",
@@ -2047,7 +2059,6 @@ export default function ClosetScreen() {
           borderWidth: 1,
           borderColor: "rgba(251,228,216,0.36)",
           boxShadow: "0 14px 32px rgba(223,182,178,0.26)",
-          zIndex: 25,
         }}
       >
         <Ionicons name="add" size={32} color={colors.ctaText} />
@@ -2242,6 +2253,7 @@ export default function ClosetScreen() {
         >
           <Pressable
             onPress={closeProductLinkSheet}
+            accessible={false}
             style={{
               ...auraSheetBackdropStyle(colors),
               justifyContent: "flex-end",
@@ -2252,6 +2264,7 @@ export default function ClosetScreen() {
           >
             <Pressable
               onPress={(event) => event.stopPropagation()}
+              accessible={false}
               style={{
                 maxHeight: layout.height * 0.84,
                 ...auraCardStyle(colors, "sheet"),
@@ -2275,6 +2288,7 @@ export default function ClosetScreen() {
                 </View>
                 <Pressable
                   onPress={closeProductLinkSheet}
+                  accessibilityLabel="Close product link"
                   disabled={productLinkBusy}
                   hitSlop={10}
                   style={({ pressed }) => ({
@@ -2296,7 +2310,9 @@ export default function ClosetScreen() {
               <View style={{ gap: 8 }}>
                 <TextInput
                   value={productLink}
+                  accessibilityLabel="Product URL"
                   onChangeText={(value) => {
+                    setProductLinkSaved(false);
                     setProductLink(value);
                     setProductLinkTouched(true);
                     setProductLinkError("");
@@ -2368,23 +2384,35 @@ export default function ClosetScreen() {
               </View>
 
               <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable
-                  onPress={() => void handlePasteFromClipboard()}
-                  disabled={productLinkBusy}
-                  style={({ pressed }) => ({
-                    flex: 0.8,
-                    ...auraButtonStyle(colors, "secondary", productLinkBusy, "compact"),
-                    flexDirection: "row",
-                    gap: 8,
-                    minHeight: 44,
-                    opacity: productLinkBusy ? 0.55 : pressed ? 0.82 : 1,
-                  })}
-                >
-                  <Ionicons name="clipboard-outline" size={17} color={productLinkBusy ? colors.textSecondary : colors.text} />
-                  <Text style={[auraButtonTextStyle(colors, "secondary", productLinkBusy), { fontSize: 14 }]}>
-                    Paste
-                  </Text>
-                </Pressable>
+                {Clipboard.isPasteButtonAvailable && !productLinkBusy ? (
+                  <Clipboard.ClipboardPasteButton
+                    acceptedContentTypes={["url", "plain-text"]}
+                    onPress={(event) => {
+                      if (event.type === "text") void handlePasteFromClipboard(event.text);
+                    }}
+                    style={{ flex: 0.8, height: 44 }}
+                    foregroundColor={colors.text}
+                    backgroundColor={colors.surfaceInteractive}
+                  />
+                ) : (
+                  <Pressable
+                    onPress={() => void handlePasteFromClipboard()}
+                    disabled={productLinkBusy}
+                    style={({ pressed }) => ({
+                      flex: 0.8,
+                      ...auraButtonStyle(colors, "secondary", productLinkBusy, "compact"),
+                      flexDirection: "row",
+                      gap: 8,
+                      minHeight: 44,
+                      opacity: productLinkBusy ? 0.55 : pressed ? 0.82 : 1,
+                    })}
+                  >
+                    <Ionicons name="clipboard-outline" size={17} color={productLinkBusy ? colors.textSecondary : colors.text} />
+                    <Text style={[auraButtonTextStyle(colors, "secondary", productLinkBusy), { fontSize: 14 }]}>
+                      Paste
+                    </Text>
+                  </Pressable>
+                )}
                 <Pressable
                   onPress={() => void handleImportProductLink()}
                   disabled={productLinkBusy || !normalizedProductLink}
@@ -2656,13 +2684,13 @@ export default function ClosetScreen() {
                     >
                       {productLinkSaving ? <ActivityIndicator size="small" color={colors.primaryCtaText} /> : null}
                       <Text style={[auraButtonTextStyle(colors, "primary", !productLinkCanSave || productLinkSaving), { fontSize: 14 }]}>
-                        {productLinkSaving ? "Adding..." : "Add to Wardrobe"}
+                        {productLinkSaved ? "Added to Wardrobe" : productLinkSaving ? "Adding..." : "Add to Wardrobe"}
                       </Text>
                     </Pressable>
                     <View style={{ flexDirection: "row", gap: 10 }}>
                       <Pressable
                         onPress={() => setProductLinkEditing((editing) => !editing)}
-                        disabled={productLinkSaving}
+                        disabled={productLinkSaving || productLinkSaved}
                         style={({ pressed }) => ({
                           flex: 1,
                           ...auraButtonStyle(colors, "secondary", productLinkSaving, "compact"),
@@ -2685,7 +2713,7 @@ export default function ClosetScreen() {
                         })}
                       >
                         <Text style={[auraButtonTextStyle(colors, "secondary", productLinkSaving), { fontSize: 13 }]}>
-                          Cancel
+                          {productLinkSaved ? "Done" : "Cancel"}
                         </Text>
                       </Pressable>
                     </View>

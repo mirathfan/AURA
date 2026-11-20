@@ -1,4 +1,5 @@
 import type { WardrobeRetrievalCategoryBucket, WardrobeRetrievalFormality } from "./retrievalTypes";
+import type { FootwearKind } from "./footwearSwap";
 import type { OutfitTargetDay } from "../../../../shared/outfitTargetDay";
 import type {
   OutfitLaundryState,
@@ -55,6 +56,7 @@ export type NormalizedOutfitGenerationInput = {
   weatherContext?: OutfitWeatherContext;
   localDate?: string;
   userText: string;
+  replacementFootwear?: FootwearKind;
   targetDay: OutfitTargetDay;
   weatherIgnoredReason?: "other_day" | "wrong_date" | "stale";
   formality: WardrobeRetrievalFormality;

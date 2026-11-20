@@ -399,10 +399,14 @@ function normalizeCategory(raw?: string | null) {
   if (["one piece", "one_piece", "dress", "dresses", "jumpsuit", "romper"].includes(value)) return "one_piece";
   if (["accessory", "accessories"].includes(value)) return "accessory";
   if (/\b(shirt|tee|t-shirt|polo|sweater|hoodie|top)\b/.test(value)) return "top";
-  if (/\b(jean|trouser|pant|short|skirt)\b/.test(value)) return "bottom";
+  if (/\b(jeans?|trousers?|pants?|shorts?|skirts?|leggings)\b/.test(value)) return "bottom";
   if (/\b(jacket|coat|blazer)\b/.test(value)) return "outerwear";
   if (/\b(dress|jumpsuit|romper)\b/.test(value)) return "one_piece";
   return "unknown";
+}
+
+function firstProductCategory(...fields: (string | null | undefined)[]) {
+  return fields.map(normalizeCategory).find((category) => category !== "unknown") ?? "unknown";
 }
 
 function subCategoryFromTitle(category: string, title?: string | null) {
@@ -445,16 +449,10 @@ export function draftFromProductLinkPreview(
       clean(preview.candidate.brand) ||
       clean(preview.metadata.brand) ||
       clean(preview.metadata.retailer),
-    category: normalizeCategory([
-      preview.candidate.category,
-      preview.candidate.subCategory,
-      preview.metadata.category,
-      preview.metadata.subCategory,
-      preview.metadata.categoryHints?.join(" "),
-      title,
-      preview.metadata.retailer,
-      preview.metadata.domain,
-    ].filter(Boolean).join(" ")),
+    category: firstProductCategory(
+      preview.metadata.category, preview.candidate.category, preview.metadata.subCategory,
+      preview.candidate.subCategory, title, ...(preview.metadata.categoryHints ?? []),
+    ),
     color: clean(preview.candidate.displayColor) || clean(preview.candidate.color) || clean(preview.metadata.displayColor) || clean(preview.metadata.color),
     size: clean(preview.metadata.sizeOptions?.[0]) || clean(preview.metadata.sizeHints?.[0]),
   };
@@ -475,17 +473,10 @@ export function candidateFromProductLinkDraft(params: {
 }): AuraCandidateItem {
   const { preview, draft } = params;
   const candidate = preview.candidate;
-  const category = normalizeCategory([
-    draft.category,
-    draft.name,
-    candidate.title,
-    candidate.subCategory,
-    preview.metadata.category,
-    preview.metadata.subCategory,
-    preview.metadata.categoryHints?.join(" "),
-    preview.metadata.retailer,
-    preview.metadata.domain,
-  ].filter(Boolean).join(" "));
+  const category = firstProductCategory(
+    draft.category, preview.metadata.category, candidate.category, draft.name,
+    candidate.subCategory, preview.metadata.subCategory, ...(preview.metadata.categoryHints ?? []),
+  );
   const color = clean(draft.color);
   const sourceUrl = candidate.sourceUrl ?? preview.metadata.sourceUrl;
   const sizeOptions = mergeSizeList(

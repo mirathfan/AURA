@@ -52,3 +52,8 @@ ios/certs/
 # Firebase emulator logs
 firebase-debug.log
 firestore-debug.log
+
+# Local QA captures can contain account data and large screenshots.
+/docs/qa/product-links-2026-11-18/
+# Workstation-specific dependency install overrides.
+/functions/.npmrc

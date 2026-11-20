@@ -1,6 +1,8 @@
+import { parseFootwearSwap, matchesFootwearKind } from "./footwearSwap";
 import { loadWardrobeForRetrieval, retrieveHybridCandidates } from "./hybridRetrieval";
 import {
   hasHardRotationRequest,
+  isWorkOccasion,
   isNotFreshForRole,
   isWornTooRecently,
   laundryStateForItem,
@@ -116,9 +118,11 @@ export function normalizeOutfitGenerationInput(value: unknown): NormalizedOutfit
     weatherContext: normalizeOutfitWeatherContext(data.weatherContext),
   });
   const weatherContext = resolvedWeather.weatherContext;
+  const swap = parseFootwearSwap(userText);
   return {
     query,
     userText,
+    ...(swap ? { replacementFootwear: swap.kind } : {}),
     targetDay: resolvedWeather.targetDay,
     ...(resolvedWeather.ignoredReason ? { weatherIgnoredReason: resolvedWeather.ignoredReason } : {}),
     count: Math.max(1, Math.min(MAX_OUTFIT_COUNT, Number.isFinite(count) ? Math.floor(count) : DEFAULT_OUTFIT_COUNT)),
@@ -139,7 +143,7 @@ export function normalizeOutfitGenerationInput(value: unknown): NormalizedOutfit
 }
 
 function intentFlags(input: NormalizedOutfitGenerationInput) {
-  const text = normalizedText([input.query, input.occasion, input.weather, input.formality].filter(Boolean).join(" "));
+  const text = normalizedText([input.userText ?? input.query, input.occasion, input.weather, input.formality].filter(Boolean).join(" "));
   const live = summarizeOutfitWeather(input.weatherContext);
   const typedWeather = /\b(summer|hot|beach|vacation|resort|warm|pool|rain|rainy|storm|wet|drizzle|cold|winter|snow|freezing|chilly)\b/.test(text);
   const liveBand = typedWeather ? null : live?.band ?? null;
@@ -147,7 +151,7 @@ function intentFlags(input: NormalizedOutfitGenerationInput) {
     cold: /\b(cold|winter|snow|freezing|chilly)\b/.test(text) || liveBand === "freezing" || liveBand === "cold",
     liveHot: liveBand === "hot",
     liveWet: !typedWeather && live?.wet === true,
-    office: /\b(office|work|interview|business|professional|meeting|corporate|workwear)\b/.test(text),
+    office: isWorkOccasion(input.occasion || text),
     date: /\b(date|dinner|night out|evening|restaurant)\b/.test(text),
     streetwear: /\b(streetwear|street|sneaker|hoodie|cargo|graphic)\b/.test(text),
     summer: /\b(summer|hot|beach|vacation|resort|warm|pool)\b/.test(text),
@@ -182,7 +186,7 @@ function inferredFormality(input: NormalizedOutfitGenerationInput): WardrobeRetr
 }
 
 function categoryColorConstraints(input: NormalizedOutfitGenerationInput): Partial<Record<OutfitRole, string[]>> {
-  const text = normalizedText(input.query);
+  const text = normalizedText(input.userText ?? input.query);
   const constraints: Partial<Record<OutfitRole, string[]>> = {};
   const colorNames = ["black", "white", "blue", "navy", "gray", "grey", "brown", "tan", "beige", "cream", "green", "red"];
   const normalizedColor = (color: string) => color === "grey" ? "gray" : color;
@@ -290,11 +294,10 @@ export function buildOutfitRetrievalPlan(input: NormalizedOutfitGenerationInput 
       top: queryParts(`${occasion ?? "outfit"} ${formality} top`, [...topExtras, ...coldTopExtras], constraints.top),
       bottom: queryParts(`${occasion ?? "outfit"} ${formality} bottom`, bottomExtras, constraints.bottom),
       footwear: queryParts(`${occasion ?? "outfit"} ${formality} footwear`, [...footwearExtras, ...coldFootwearExtras], constraints.footwear),
-      outerwear: queryParts(`${occasion ?? "outfit"} ${formality} outerwear`, flags.office
-        ? ["overshirt", "blazer", "clean jacket", "structured layer", ...(flags.date ? dateOuterwearExtras : [])]
-        : flags.date
-          ? dateOuterwearExtras
-          : ["jacket", "outerwear", "layer", ...coldOuterwearExtras, ...wetOuterwearExtras], constraints.outerwear),
+      outerwear: queryParts(`${occasion ?? "outfit"} ${formality} outerwear`, [
+        ...(flags.office ? ["overshirt", "blazer", "clean jacket", "structured layer"] : ["jacket", "outerwear", "layer"]),
+        ...(flags.date ? dateOuterwearExtras : []), ...coldOuterwearExtras, ...wetOuterwearExtras,
+      ], constraints.outerwear),
       accessory: queryParts(`${occasion ?? "outfit"} ${formality} accessory`, flags.office
         ? ["watch", "belt", "minimal accessory", ...(flags.date ? dateAccessoryExtras : [])]
         : flags.date
@@ -580,8 +583,10 @@ async function defaultRetrieveRoleCandidates(args: {
     args.wardrobe ? { wardrobe: args.wardrobe } : {},
   );
   const required = new Set(args.input.requiredItemIds);
+  const target = args.role === "footwear" ? args.input.replacementFootwear : undefined;
   const candidates = allCandidates.filter((candidate) =>
-    required.has(candidate.itemId) || laundryStateForItem(candidate.item) !== "in_laundry");
+    (required.has(candidate.itemId) || laundryStateForItem(candidate.item) !== "in_laundry") &&
+    (!target || matchesFootwearKind(target, candidate.item)));
   const results = buildWardrobeRetrievalResults({
     query: args.query,
     limit: args.limit,
@@ -753,6 +758,11 @@ export async function retrieveOutfitGenerationContext(
   const withRequiredCandidates = mergeRequiredCandidates(candidates, requiredResult.candidates);
   const canonicalWithRequired = canonicalizeOutfitCandidateBuckets(withRequiredCandidates);
   const laundryFiltered = excludeLaundryCandidates(canonicalWithRequired, normalized.requiredItemIds);
+  const target = normalized.replacementFootwear;
+  if (target) {
+    laundryFiltered.buckets.footwear = laundryFiltered.buckets.footwear.filter((item) =>
+      !normalized.avoidItemIds.includes(item.itemId) && matchesFootwearKind(target, item));
+  }
   const rotationFiltered = applyWearRotation(laundryFiltered.buckets, {
     keepItemIds: normalized.requiredItemIds,
     userText: normalized.userText,

@@ -211,12 +211,13 @@ describe("AuraAgentOldStyleOutfitCard", () => {
     expect(getByText("board:chat")).toBeTruthy();
   });
 
-  it("maps agent outfit items to old Aura look pieces without raw ids", () => {
+  it("keeps each pictured item linked to its closet ID without printing it", () => {
     const look = buildAuraLookFromAgentOutfit(outfit);
     const serialized = JSON.stringify(look);
 
     expect(look.pieces.map((piece) => piece.role)).toEqual(["top", "bottom", "shoes"]);
-    expect(serialized).not.toContain("top-item-raw-id");
+    expect(look.pieces.map((piece) => piece.itemId)).toEqual(outfit.items.map((item) => item.itemId));
+    expect(look.pieces.map((piece) => piece.itemName)).not.toContain("top-item-raw-id");
     expect(serialized).not.toContain("canonicalRole");
     expect(serialized).not.toContain("sourceRole");
     expect(serialized).not.toContain("aiMetadata");
@@ -495,7 +496,12 @@ describe("AuraAgentOldStyleOutfitCard", () => {
       />,
     );
 
-    fireEvent(getByTestId("aura-agent-outfit-carousel"), "momentumScrollEnd", {
+    const carousel = getByTestId("aura-agent-outfit-carousel");
+    // Mounting or restoring an older carousel can fire these without a user selecting a look.
+    fireEvent(carousel, "momentumScrollEnd", { nativeEvent: { contentOffset: { x: 0 } } });
+    expect(onSelectOutfit).not.toHaveBeenCalled();
+    fireEvent(carousel, "scrollBeginDrag");
+    fireEvent(carousel, "momentumScrollEnd", {
       nativeEvent: { contentOffset: { x: 9999 } },
     });
     fireEvent.press(getByText("Why this works"));

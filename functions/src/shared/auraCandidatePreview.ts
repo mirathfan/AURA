@@ -1307,6 +1307,7 @@ export function productCategoryHintsFromText(title?: string | null, description?
     if (/\bpolo\b/.test(titleText)) return "polo";
     if (/\bt-?shirt|\btee\b/.test(titleText)) return "tshirt";
     if (/\bhoodie\b/.test(titleText)) return "hoodie";
+    if (/\b(?:sweatshirts?|pullovers?)\b/.test(titleText)) return "sweatshirt";
     if (/\bsweater|jumper|knit\b/.test(titleText)) return "sweater";
     if (/\btank|vest\b/.test(titleText)) return "tank";
     if (/\bblouse\b/.test(titleText)) return "blouse";

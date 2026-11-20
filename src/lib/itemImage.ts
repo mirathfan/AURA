@@ -15,6 +15,7 @@ export type ItemImageSurface =
   | "ai_outfit";
 
 type ImageLikeItem = {
+  source?: string | null;
   category?: string | null;
   subCategory?: string | null;
   type?: string | null;
@@ -570,6 +571,7 @@ export function getItemImageUrl(
           item.photos?.thumbUrl,
           item.photos?.croppedUrl,
           item.photos?.previewUrl,
+          item.source === "product_link" ? preferredOriginal : null,
         ])
       : preferredCutout ??
         preferredOriginal ??
