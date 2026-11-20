@@ -159,6 +159,20 @@ describe("1. selected, named and laundry items", () => {
     );
   });
 
+  it("resolves named laundry coats before considering a shared garment kind", () => {
+    const wardrobe = {
+      requiredItemIds: [], availableSubcategories: [],
+      laundryItems: [
+        { itemId: "camel", name: "Camel Wool Overcoat", subcategory: "overcoat" },
+        { itemId: "navy", name: "Navy Long Wool Coat", subcategory: "overcoat" },
+      ],
+    };
+    const named = (userText: string) => findLaundryNotices({ ...wardrobe, userText }).namedInLaundry;
+    expect(named("dinner outfit with my Camel Wool Overcoat")).toEqual(["Camel Wool Overcoat"]);
+    expect(named("Camel Wool Overcoat or Navy Long Wool Coat")).toEqual(["Camel Wool Overcoat", "Navy Long Wool Coat"]);
+    expect(named("outfit with an overcoat")).toEqual(["Camel Wool Overcoat", "Navy Long Wool Coat"]);
+  });
+
   it("only explains a kind of garment when no clean one exists", () => {
     const base = {
       userText: "something with jeans",

@@ -1,4 +1,4 @@
-import type { OutfitOpenAIClient } from "../outfitGeneration";
+import { generateValidatedOutfitsFromContext, type OutfitOpenAIClient } from "../outfitGeneration";
 import {
   blindOrderFor,
   buildLiveEvalContext,
@@ -359,5 +359,56 @@ describe("held-out live eval cases", () => {
     expect(scoreLiveEvalHardChecks(evalCase, ["live-black-tee", "live-black-cargos", "live-brown-boots"]).violationCount).toBe(0);
     expect(scoreLiveEvalHardChecks(evalCase, ["live-black-tee", "live-black-cargos", "live-white-sneakers"]).usedReplacedItem).toBe(true);
     expect(scoreLiveEvalHardChecks(evalCase, ["live-white-tee", "live-black-cargos", "live-brown-boots"]).droppedKeptItem).toBe(true);
+  });
+});
+
+describe("cold weather laundry substitutions and wear alternatives", () => {
+  const coldLaundry = caseById("heldout-named-laundry-coat");
+  const original = ["live-black-turtleneck", "live-black-trousers", "live-brown-boots", "live-steel-watch"];
+
+  async function dinner(closetItemIds?: string[], extraSelected: string[] = []) {
+    const scenario = { ...coldLaundry, closetItemIds };
+    const context = buildLiveEvalContext(scenario, "full");
+    const input = buildLiveEvalInput(scenario, "full");
+    const staleText = "The camel wool overcoat adds the polished finish.";
+    const draft = JSON.parse(outfitPayload([...original, ...extraSelected], staleText));
+    draft.outfits[0].explanation = staleText;
+    draft.outfits[0].title = "Camel wool overcoat dinner";
+    const client = { responses: { create: async () => ({ output_text: JSON.stringify(draft) }) } };
+    const result = await generateValidatedOutfitsFromContext(input, context, { client, repair: false });
+    return { ...result, notice: laundryNoticeText(context.diagnostics.laundryNotices) };
+  }
+
+  it("replaces the unavailable coat in a cold dinner card and grounds the explanation and reply", async () => {
+    const result = await dinner();
+    const card = result.outfits[0];
+    expect(card.items.map((item) => item.itemId)).toContain("live-black-puffer");
+    expect(card.items.map((item) => item.itemId)).not.toContain("live-camel-coat");
+    expect(result.stylistMessage).toContain("Black Down Puffer");
+    expect(card.explanation).toContain("Black Down Puffer");
+    expect(result.stylistMessage + card.explanation + card.title).not.toMatch(/camel wool overcoat/i);
+    expect(result.notice).toMatch(/Camel Wool Overcoat is in the laundry/);
+  });
+
+  it("retains an already selected warm layer and mentions it once on the card", async () => {
+    const result = await dinner(undefined, ["live-black-puffer"]);
+    expect(result.outfits[0].items.filter((item) => item.itemId === "live-black-puffer")).toHaveLength(1);
+    expect(result.stylistMessage).toContain("Black Down Puffer");
+  });
+
+  it("plainly discloses missing warmth when the remaining closet has no suitable layer", async () => {
+    const result = await dinner([...original, "live-camel-coat", "live-brown-suede-jacket"]);
+    expect(result.outfits[0].items.map((item) => item.itemId)).toEqual(original);
+    expect(result.stylistMessage).toMatch(/no suitable warm|couldn.t find a (?:suitable )?warm/i);
+    expect(result.outfits[0].explanation).toMatch(/no suitable warm|couldn.t find a (?:suitable )?warm/i);
+    expect(result.notice).toMatch(/Camel Wool Overcoat is in the laundry/);
+  });
+
+  it("only penalizes a cold-weather repeat if a suitable fresh alternative exists", () => {
+    const scenario = caseById("heldout-small-closet-cold");
+    const chosen = ["live-charcoal-knit", "live-dark-denim", "live-brown-boots", "live-black-puffer"];
+    expect(scoreLiveEvalHardChecks(scenario, chosen).repeatedRecentWear).toBe(false);
+    const withFreshWarmTop = { ...scenario, closetItemIds: [...scenario.closetItemIds!, "live-cream-hoodie"] };
+    expect(scoreLiveEvalHardChecks(withFreshWarmTop, chosen).repeatedRecentWear).toBe(true);
   });
 });

@@ -123,6 +123,7 @@ export type OutfitLaundryNotices = {
   selectedInLaundry: string[];
   // Named in the request and left out because they are in the laundry.
   namedInLaundry: string[];
+  needsWarmReplacement?: boolean;
 };
 
 export type OutfitCandidateBuckets = Record<OutfitRole, OutfitCandidate[]>;

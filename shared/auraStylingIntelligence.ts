@@ -607,7 +607,11 @@ export function classifyAuraStylingIntent(
     };
   }
 
+  // A named-piece brief can follow a weather sentence. Match a request clause
+  // so questions like “why does a dinner outfit with my coat work?” stay advice.
+  const namedOutfitBrief = /(?:^|[.!?]\s+)(?:(?:i(?:['’]d| would) like|i want|i need)\s+)?(?:an?\s+)?(?:(?:dinner|date|night|evening|day|work|office|weekend|casual|warm|winter|business|smart|formal|travel|party|wedding)\s+){0,2}(?:outfit|look|fit)\s+(?:with|using|around)\s+(?:my|the)\b/i.test(raw);
   const generation =
+    namedOutfitBrief ||
     has(text, /\b(what should i wear|what do i wear|give me (?:a )?fit|give me (?:an? )?outfit|style me|dress me|build me|make me|put together|plan (?:a|an|my)? ?(?:fit|outfit|look)|outfit for|fit for|look for|wear tonight|wear today|wear tomorrow|what else can i wear|only .*outfits?|all .*outfits?|fits? around|outfits? around)\b/) ||
     has(text, /\b(first date fit|date night fit|coffee date fit|club fit|airport fit|gym fit|wedding fit|interview fit|vacation fit|resort fit)\b/);
   const iteration = has(text, /\b(another version|another one|one more|try again|show me another|give me another|different version|different outfit|different look|something else|what else can i wear|new one)\b/);

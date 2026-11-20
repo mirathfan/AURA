@@ -2890,6 +2890,13 @@ export function isProductRedirectToStorefront(original: URL, resolved: URL) {
   return !storefrontPath.test(original.pathname) && storefrontPath.test(resolved.pathname);
 }
 
+export function isProductRedirectToStorefront(original: URL, resolved: URL) {
+  // A removed or region-unavailable product can redirect to a locale homepage
+  // with perfectly valid OG images. Those images advertise the store, not the item.
+  const storefrontPath = /^\/(?:[a-z]{2}(?:[-_][a-z]{2})?(?:\/[a-z]{2})?\/?)?$/i;
+  return !storefrontPath.test(original.pathname) && storefrontPath.test(resolved.pathname);
+}
+
 export async function fetchResolvedProductPage(url: URL): Promise<FetchedProductPage> {
   let originalStatus: number | null = null;
   let originalError: unknown = null;

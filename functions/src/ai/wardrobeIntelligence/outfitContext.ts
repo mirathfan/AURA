@@ -34,7 +34,7 @@ import {
   type OutfitRole,
 } from "./outfitTypes";
 
-const MAX_OUTFIT_COUNT = 5;
+export const MAX_OUTFIT_COUNT = 5;
 const DEFAULT_OUTFIT_COUNT = 3;
 const ROLE_CATEGORY: Record<OutfitRole, string> = {
   top: "top",
@@ -142,7 +142,10 @@ export function normalizeOutfitGenerationInput(value: unknown): NormalizedOutfit
   };
 }
 
-function intentFlags(input: NormalizedOutfitGenerationInput) {
+type WeatherAndStyleBrief = Partial<Pick<NormalizedOutfitGenerationInput,
+  "query" | "userText" | "occasion" | "weather" | "weatherContext" | "formality">>;
+
+function intentFlags(input: WeatherAndStyleBrief) {
   const text = normalizedText([input.userText ?? input.query, input.occasion, input.weather, input.formality].filter(Boolean).join(" "));
   const live = summarizeOutfitWeather(input.weatherContext);
   const typedWeather = /\b(summer|hot|beach|vacation|resort|warm|pool|rain|rainy|storm|wet|drizzle|cold|winter|snow|freezing|chilly)\b/.test(text);
@@ -511,18 +514,23 @@ export function applyWearRotation(
 
 // Laundry items the user asked for must never vanish silently. A selected
 // item is kept and flagged; a named item is left out and explained.
-export function findLaundryNotices(args: {
+export function findLaundryNotices(args: WeatherAndStyleBrief & {
   userText: string;
   requiredItemIds: string[];
   // Every laundry item we know about for this request.
-  laundryItems: { itemId: string; name: string; subcategory?: string }[];
+  laundryItems: { itemId: string; name: string; category?: string; subcategory?: string }[];
   // Subcategories that still have a wearable piece.
   availableSubcategories: string[];
 }): OutfitLaundryNotices {
   const required = new Set(args.requiredItemIds);
   const available = new Set(args.availableSubcategories.map((entry) => rotationWords(entry).join(" ")).filter(Boolean));
+  // A specific garment name resolves that kind, even if another dirty item shares it.
+  const namedKinds = new Set(args.laundryItems
+    .filter((item) => wordsNamedIn(args.userText, item.name))
+    .map((item) => rotationWords(item.subcategory).join(" ")));
   const selectedInLaundry: string[] = [];
   const namedInLaundry: string[] = [];
+  let needsWarmReplacement = false;
   const seen = new Set<string>();
   for (const item of args.laundryItems) {
     if (seen.has(item.itemId)) continue;
@@ -535,11 +543,20 @@ export function findLaundryNotices(args: {
     }
     const namedExactly = wordsNamedIn(args.userText, item.name);
     // "something with jeans" only needs explaining when no clean jeans exist.
-    const namedByKind = wordsNamedIn(args.userText, item.subcategory) &&
-      !available.has(rotationWords(item.subcategory).join(" "));
-    if (namedExactly || namedByKind) namedInLaundry.push(name);
+    const kind = rotationWords(item.subcategory).join(" ");
+    const namedByKind = !namedKinds.has(kind) && !available.has(kind) && wordsNamedIn(args.userText, item.subcategory);
+    if (namedExactly || namedByKind) {
+      namedInLaundry.push(name);
+      if (canonicalizeOutfitRole(item, item.category) === "outerwear" && intentFlags(args).cold) {
+        needsWarmReplacement = true;
+      }
+    }
   }
-  return { selectedInLaundry: selectedInLaundry.slice(0, 4), namedInLaundry: namedInLaundry.slice(0, 4) };
+  return {
+    selectedInLaundry: selectedInLaundry.slice(0, 4),
+    namedInLaundry: namedInLaundry.slice(0, 4),
+    ...(needsWarmReplacement ? { needsWarmReplacement } : {}),
+  };
 }
 
 export function canonicalizeOutfitCandidateBuckets(
@@ -773,11 +790,11 @@ export async function retrieveOutfitGenerationContext(
     .map((entry) => ({
       itemId: entry.itemId,
       name: String(entry.item.name ?? ""),
+      category: String(entry.item.category ?? ""),
       ...(entry.item.subcategory ? { subcategory: String(entry.item.subcategory) } : {}),
     }));
   const laundryNotices = findLaundryNotices({
-    userText: normalized.userText,
-    requiredItemIds: normalized.requiredItemIds,
+    ...normalized,
     laundryItems: [...allCandidates.filter(isInLaundry), ...laundryFiltered.excluded, ...wardrobeLaundry],
     availableSubcategories: wardrobe
       ? wardrobe.filter((entry) => laundryStateForItem(entry.item) !== "in_laundry")
